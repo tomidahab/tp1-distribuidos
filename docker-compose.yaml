@@ -1,0 +1,21 @@
+version: '3'
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+  boundary:
+    build: ./boundary
+    depends_on:
+      - rabbitmq
+    ports:
+      - "5000:5000"
+  client:
+    build: ./client
+    depends_on:
+      - boundary
+  consumer:
+    build: ./consumer
+    depends_on:
+      - rabbitmq
