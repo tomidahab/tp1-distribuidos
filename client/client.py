@@ -9,7 +9,7 @@ def main():
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect((HOST, PORT))
-        message = "hola"
+        message = "read"
         logging.info(f"Sending message: {message}")
         sock.sendall(message.encode())
         response = sock.recv(1024)
