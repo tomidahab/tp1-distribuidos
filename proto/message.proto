@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+message ClientMessage {
+  string operation = 1; // "read" or "write"
+  string query = 2;     // exactly 8 characters expected
+  bytes data = 3;
+}
+
+message RoutedMessage {
+  string client_id = 1;
+  ClientMessage client_message = 2;
+}

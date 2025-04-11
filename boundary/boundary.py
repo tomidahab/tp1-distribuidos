@@ -1,27 +1,29 @@
 import socket
 import threading
 import uuid
-import pika
-import logging
 import time
+import logging
+import pika
+import message_pb2
 
 logging.basicConfig(level=logging.INFO)
-
 RABBITMQ_HOST = 'rabbitmq'
 MAX_RETRIES = 10
-RETRY_DELAY = 10
+RETRY_DELAY = 2
 
-def send_to_rabbitmq(client_id, message):
+def send_to_rabbitmq(routed_msg_serialized):
     attempts = 0
-    payload = f"{client_id}:{message}"
     while attempts < MAX_RETRIES:
         try:
-            logging.info(f"Attempting to connect to RabbitMQ at {RABBITMQ_HOST}:5672 (attempt {attempts+1})")
             connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
             channel = connection.channel()
             channel.queue_declare(queue='client_messages', durable=True, auto_delete=False)
-            channel.basic_publish(exchange='', routing_key='client_messages', body=payload)
-            logging.info(f"Sent to RabbitMQ: {payload}")
+            channel.basic_publish(
+                exchange='',
+                routing_key='client_messages',
+                body=routed_msg_serialized
+            )
+            logging.info("Sent routed message to 'client_messages' queue")
             connection.close()
             return
         except Exception as e:
@@ -34,13 +36,17 @@ def handle_client(client_socket, address):
     client_id = str(uuid.uuid4())
     logging.info(f"Accepted connection from {address}. Assigned client ID {client_id}")
     try:
-        data = client_socket.recv(1024)
+        data = client_socket.recv(4096)
         if data:
-            message = data.decode().strip()
-            logging.info(f"Received from client {client_id}: {message}")
-            time.sleep(60)
-            send_to_rabbitmq(client_id, message)
-            client_socket.sendall(f"Received your message, client {client_id}".encode())
+            client_msg = message_pb2.ClientMessage()
+            client_msg.ParseFromString(data)
+            logging.info(f"Received from client {client_id}: operation={client_msg.operation}, query={client_msg.query}, data={client_msg.data}")
+            routed_msg = message_pb2.RoutedMessage()
+            routed_msg.client_id = client_id
+            routed_msg.client_message.CopyFrom(client_msg)
+            serialized_routed = routed_msg.SerializeToString()
+            send_to_rabbitmq(serialized_routed)
+            client_socket.sendall(f"Message received, client {client_id}".encode())
     except Exception as e:
         logging.error(f"Error handling client {client_id}: {e}")
     finally:
@@ -56,8 +62,7 @@ def main():
     try:
         while True:
             client_socket, address = server_socket.accept()
-            thread = threading.Thread(target=handle_client, args=(client_socket, address))
-            thread.start()
+            threading.Thread(target=handle_client, args=(client_socket, address)).start()
     except KeyboardInterrupt:
         logging.info("Shutting down server")
     finally:

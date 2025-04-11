@@ -5,17 +5,26 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+
   boundary:
-    build: ./boundary
+    build:
+      context: .
+      dockerfile: boundary/Dockerfile
     depends_on:
       - rabbitmq
     ports:
       - "5000:5000"
+
   client:
-    build: ./client
+    build:
+      context: .
+      dockerfile: client/Dockerfile
     depends_on:
       - boundary
+
   consumer_routing:
-    build: ./consumer_routing
+    build:
+      context: .
+      dockerfile: consumer_routing/Dockerfile
     depends_on:
       - rabbitmq
