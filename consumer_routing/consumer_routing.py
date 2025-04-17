@@ -53,6 +53,7 @@ def main():
             channel.basic_consume(
                 queue='client_messages', 
                 on_message_callback=callback, 
+                # No auto_ack, we have to manually send it when we are done processing
                 auto_ack=True
             )
             logging.info("Routing consumer started. Waiting for messages.")

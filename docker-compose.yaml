@@ -1,21 +1,32 @@
-version: '3'
 services:
-  rabbitmq:
-    image: rabbitmq:3-management
-    ports:
-      - "5672:5672"
-      - "15672:15672"
+  # rabbitmq:
+  #   image: rabbitmq:3-management
+  #   ports:
+  #     - "5672:5672"
+  #     - "15672:15672"
+
+
   boundary:
     build: ./boundary
-    depends_on:
-      - rabbitmq
+    # depends_on:
+    #   - rabbitmq
     ports:
       - "5000:5000"
+    volumes:
+      - ./boundary:/app
+      
+
   client:
+    env_file:
+      - ./client/.env
     build: ./client
     depends_on:
       - boundary
-  consumer_routing:
-    build: ./consumer_routing
-    depends_on:
-      - rabbitmq
+    volumes:
+      - ./client:/app
+
+
+  # consumer_routing:
+  #   build: ./consumer_routing
+    # depends_on:
+    #   - rabbitmq
