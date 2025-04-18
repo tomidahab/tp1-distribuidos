@@ -54,11 +54,19 @@ class Client:
             raise FileNotFoundError(f"File not found: {file_path}")
         try:
             with open(file_path, 'rb') as f:
-                while True:
-                    data = f.read(batch_size)
-                    if not data:
-                        break
-                    yield data
+                batch = b''
+                for line in f:
+                    # Check if adding this line would exceed batch_size
+                    if len(batch) + len(line) > batch_size and batch:
+                        # If yes, yield current batch and start a new one with this line
+                        yield batch
+                        batch = line
+                    else:
+                        # Otherwise, add line to current batch
+                        batch += line
+                # Don't forget to yield the last batch if it has data
+                if batch:
+                    yield batch
         except IOError as e:
             raise IOError(f"Error reading file {file_path}: {e}")
 
