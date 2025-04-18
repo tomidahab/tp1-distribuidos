@@ -28,3 +28,58 @@ services:
       dockerfile: consumer_routing/Dockerfile
     depends_on:
       - rabbitmq
+
+  node_query1:
+    build:
+      context: .
+      dockerfile: node_query/Dockerfile
+    environment:
+      - QUEUE_NAME=query1
+      - NODE_ID=1
+      - RABBITMQ_HOST=rabbitmq
+    depends_on:
+      - rabbitmq
+
+  node_query2:
+    build:
+      context: .
+      dockerfile: node_query/Dockerfile
+    environment:
+      - QUEUE_NAME=query2
+      - NODE_ID=2
+      - RABBITMQ_HOST=rabbitmq
+    depends_on:
+      - rabbitmq
+
+  node_query3:
+    build:
+      context: .
+      dockerfile: node_query/Dockerfile
+    environment:
+      - QUEUE_NAME=query3
+      - NODE_ID=3
+      - RABBITMQ_HOST=rabbitmq
+    depends_on:
+      - rabbitmq
+
+  node_query4:
+    build:
+      context: .
+      dockerfile: node_query/Dockerfile
+    environment:
+      - QUEUE_NAME=query4
+      - NODE_ID=4
+      - RABBITMQ_HOST=rabbitmq
+    depends_on:
+      - rabbitmq
+
+  node_query5:
+    build:
+      context: .
+      dockerfile: node_query/Dockerfile
+    environment:
+      - QUEUE_NAME=query5
+      - NODE_ID=5
+      - RABBITMQ_HOST=rabbitmq
+    depends_on:
+      - rabbitmq

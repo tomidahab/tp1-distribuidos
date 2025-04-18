@@ -13,13 +13,9 @@ def publish_to_queue(queue_name, payload):
     while attempts < MAX_RETRIES:
         try:
             connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
-            channel = connection.channel()
+            channel    = connection.channel()
             channel.queue_declare(queue=queue_name, durable=True, auto_delete=False)
-            channel.basic_publish(
-                exchange='',
-                routing_key=queue_name,
-                body=payload
-            )
+            channel.basic_publish(exchange='', routing_key=queue_name, body=payload)
             logging.info(f"Published routed message to queue '{queue_name}'")
             connection.close()
             return
@@ -34,13 +30,9 @@ def callback(ch, method, properties, body):
         routed_msg = message_pb2.RoutedMessage()
         routed_msg.ParseFromString(body)
         op = routed_msg.client_message.operation.lower()
-        logging.info(f"Routing message for client {routed_msg.client_id} with operation: {op}")
-        if op == "read":
-            publish_to_queue("read_queue", body)
-        elif op == "write":
-            publish_to_queue("write_queue", body)
-        else:
-            logging.error(f"Unexpected operation: {op}")
+        logging.info(f"Fan‑out message for client {routed_msg.client_id}, op={op} to query1…query5")
+        for i in range(1, 6):
+            publish_to_queue(f"query{i}", body)
     except Exception as e:
         logging.error(f"Error processing message: {e}")
 
@@ -50,8 +42,8 @@ def main():
             connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
             channel = connection.channel()
             channel.queue_declare(queue='client_messages', durable=True, auto_delete=False)
-            channel.queue_declare(queue='read_queue', durable=True, auto_delete=False)
-            channel.queue_declare(queue='write_queue', durable=True, auto_delete=False)
+            for i in range(1, 6):
+                channel.queue_declare(queue=f"query{i}", durable=True, auto_delete=False)
             channel.basic_consume(queue='client_messages', on_message_callback=callback, auto_ack=True)
             logging.info("Routing consumer started. Waiting for messages.")
             channel.start_consuming()

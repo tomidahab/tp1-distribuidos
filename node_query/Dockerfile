@@ -1,8 +1,7 @@
 FROM python:3.9-slim
 WORKDIR /app
-COPY client/requirements.txt .
-COPY client/example.csv .
+COPY node_query/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY client/client.py .
+COPY node_query/node_query.py .
 COPY proto/message_pb2.py .
-CMD ["python", "client.py"]
+CMD ["python", "node_query.py"]

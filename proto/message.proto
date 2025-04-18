@@ -10,3 +10,10 @@ message RoutedMessage {
   string client_id = 1;
   ClientMessage client_message = 2;
 }
+
+message FileChunk {
+  string client_id = 1;
+  uint32    index     = 2;
+  bool      last      = 3;
+  bytes     payload   = 4;
+}
