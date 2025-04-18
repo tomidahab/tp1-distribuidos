@@ -28,5 +28,5 @@ class Protocol:
         length_bytes = length.to_bytes(4, byteorder='big')
         return length_bytes, data_bytes
 
-    def _decode(self, data_bytes):
+    def decode(self, data_bytes):
         return data_bytes.decode('utf-8')

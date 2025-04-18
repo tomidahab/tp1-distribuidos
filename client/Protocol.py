@@ -31,18 +31,23 @@ class Protocol:
         # Then send the message bytes
         self._send_all(sock, data_bytes)
     
-    def _encode_data(self, data: str):
+    def _encode_data(self, data):
         """
-        Encode string data to bytes and prepare length header
+        Encode data to bytes and prepare length header
         Returns tuple of (length_bytes, data_bytes)
         """
-        # Encode the data to bytes
-        data_bytes = data.encode('utf-8')
+        # Convert to bytes if it's a string
+        if isinstance(data, str):
+            data_bytes = data.encode('utf-8')
+        else:
+            # Already bytes
+            data_bytes = data
+            
         # Get the length and encode it as 4 bytes
         length = len(data_bytes)
         length_bytes = length.to_bytes(4, byteorder='big')
         return length_bytes, data_bytes
-
+    
     def _send_all(self, sock, data: bytes):
         """
         Helper to send all bytes, handling short writes

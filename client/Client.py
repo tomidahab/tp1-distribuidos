@@ -38,66 +38,15 @@ class Client:
             self.skt.close()
             self.skt = None
 
-    def send_queries(self, queries: list[str]):
+    def send_csv(self, file_path: str = None):
         if self.skt is None:
             raise Exception("Socket not connected")
+        logging.info(f"\033[94mSending CSV file: {file_path}\033[0m")
         
-        self.protocol.send_all(self.skt, 'Hello world')
-        return
-
-        logging.info(f"Sending a total of {len(queries)} queries")
-        csvs_sent = {}
-        csvs_sent[self.config.get_movies()] = False
-        csvs_sent[self.config.get_ratings()] = False
-        csvs_sent[self.config.get_crew()] = False
-        
-        for query in queries:
-            if query == self.config.get_query1():
-                self._send_query1_csv(csvs_sent)
-                csvs_sent[self.config.get_movies()] = True
-            elif query == self.config.get_query2():
-                self._send_query2_csv(csvs_sent)
-                csvs_sent[self.config.get_movies()] = True
-            elif query == self.config.get_query3():
-                self._send_query3_csv(csvs_sent)
-                csvs_sent[self.config.get_movies()] = True
-                csvs_sent[self.config.get_ratings()] = True
-            elif query == self.config.get_query4():
-                self._send_query4_csv(csvs_sent)
-                csvs_sent[self.config.get_movies()] = True
-                csvs_sent[self.config.get_crew()] = True
-            elif query == self.config.get_query5():
-                self._send_query5_csv(csvs_sent)
-                csvs_sent[self.config.get_movies()] = True
-                csvs_sent[self.config.get_ratings()] = True
-            else:
-                raise ValueError(f"Unknown query: {query}")
-        self._send_queries(queries)
-
-
-    def _send_query2_csv(self, csvs_sent: dict):
-        if csvs_sent[self.config.get_movies()]:
-            return
-    def _send_query3_csv(self, csvs_sent: dict):
-        if csvs_sent[self.config.get_movies()] and csvs_sent[self.config.get_ratings()]:
-            return
-        
-    def _send_query4_csv(self, csvs_sent: dict):
-        if csvs_sent[self.config.get_movies()] and csvs_sent[self.config.get_crew()]:
-            return
-        
-    def _send_query5_csv(self, csvs_sent: dict):
-        if csvs_sent[self.config.get_movies()] and csvs_sent[self.config.get_ratings()]:
-            return
-            
-    def _send_query1_csv(self, csvs_sent: dict):
-        if csvs_sent[self.config.get_movies()]:
-            return
-        
-        for batch in self._read_file_in_batches(self.config.get_movies(), self.config.get_batch_size()):
+        for batch in self._read_file_in_batches(file_path, self.config.get_batch_size()):
             self.protocol.send_all(self.skt, batch)
-        self.protocol.send_all(self.skt, b'\n')
-        logging.info(f"Sent .csv from query 1: {self.config.get_movies()    }")
+        self.protocol.send_all(self.skt, self.config.get_EOF())
+        logging.info(f"\033[94mCSV file sent successfully with EOF: {self.config.get_EOF()}\033[0m")
         
     def _read_file_in_batches(self, file_path: str, batch_size: int):
         # Validate inputs
@@ -112,15 +61,6 @@ class Client:
                     yield data
         except IOError as e:
             raise IOError(f"Error reading file {file_path}: {e}")
-
-    def _send_queries(self, queries: list[str]):
-        if not queries:
-            raise ValueError("No queries to send")
-
-        for query in queries:
-            self.protocol.send_all(self.skt, query.encode('utf-8'))
-        self.protocol.send_all(self.skt, b'\n')
-        logging.info(f"Sent queries: {queries}")
 
     def recv_response(self):
         if self.skt is None:

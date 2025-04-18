@@ -14,7 +14,10 @@ def main():
         return
     
     try:
-        client.send_queries([config.get_query1(), config.get_query2()])
+        client.send_csv(config.get_movies())
+        # client.send_csv(config.get_ratings())
+        # client.send_csv(config.get_crew())
+        logging.info("\033[92mAll CSV files sent successfully\033[0m")
         data = client.recv_response()
         logging.info(f"Received data: {data}")
     except OSError as e:
