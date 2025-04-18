@@ -1,21 +1,4 @@
 services:
-  # rabbitmq:
-  #   image: rabbitmq:3-management
-  #   ports:
-  #     - "5672:5672"
-  #     - "15672:15672"
-
-
-  boundary:
-    build: ./boundary
-    # depends_on:
-    #   - rabbitmq
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./boundary:/app
-      
-
   client:
     env_file:
       - ./client/.env
@@ -25,8 +8,33 @@ services:
     volumes:
       - ./client:/app
 
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
 
-  # consumer_routing:
-  #   build: ./consumer_routing
-    # depends_on:
-    #   - rabbitmq
+
+  boundary:
+    build:
+      context: ./server
+      dockerfile: boundary/Dockerfile
+    depends_on:
+      - rabbitmq
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./server/boundary:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      
+  filter_by_year_worker:
+    build:
+      context: ./server
+      dockerfile: worker/filter_by_year/Dockerfile
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/worker/filter_by_year:/app
+      - ./server/rabbitmq:/app/rabbitmq 
+    deploy:
+      replicas: 2
