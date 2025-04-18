@@ -54,6 +54,9 @@ class Client:
             raise FileNotFoundError(f"File not found: {file_path}")
         try:
             with open(file_path, 'rb') as f:
+                # Skip the header/first line
+                f.readline()
+                
                 batch = b''
                 for line in f:
                     # Check if adding this line would exceed batch_size
