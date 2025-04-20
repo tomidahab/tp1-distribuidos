@@ -5,9 +5,14 @@ import socket
 import uuid
 from Protocol import Protocol
 from rabbitmq.Rabbitmq_client import RabbitMQClient
+import csv
+from io import StringIO
+from common.Serializer import Serializer
 
 #TODO move this to a common config file or common env var since worker has this too
 BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
+COLUMNS = {'genres': 3, 'imdb_id':6, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
+EOF_MARKER = "EOF_MARKER"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,14 +76,17 @@ class Boundary:
     logging.info(self.green(f"Client ID: {client_id} successfully started"))
     try:
         data = ''
-        while data != "EOF_MARKER":
+        while True:
             try:
                 data = await self._receive_csv_batch(sock, proto)
-                await self._send_data_to_rabbitmq_queue(data)
+                if data == EOF_MARKER:
+                    logging.info(f"EOF received from client {addr[0]}:{addr[1]}")
+                    break
+                filtered_data = self.project_to_columns(data)
+                await self._send_data_to_rabbitmq_queue(filtered_data)
             except ConnectionError:
                 logging.info(f"Client {addr[0]}:{addr[1]} disconnected")
                 break
-            logging.info(f"EOF received from client {addr[0]}:{addr[1]}")
                 
     except Exception as exc:
         logging.error(f"Client {addr[0]}:{addr[1]} error: {exc}")
@@ -92,6 +100,32 @@ class Boundary:
     #     if sock in self._client_sockets:
     #         self._client_sockets.remove(sock)
     #     logging.info("Connection gracefully closed %s:%d", *addr)
+
+  def project_to_columns(self, data):
+    """
+    Extract only the columns defined in COLUMNS from the CSV data.
+    Returns an array of dictionaries, where each dictionary represents a row
+    with column names as keys and the corresponding values.
+    Handles properly quoted fields that may contain commas.
+    """
+    # Use Python's csv module to correctly parse the CSV data
+    input_file = StringIO(data)
+    csv_reader = csv.reader(input_file)
+    
+    result = []
+    
+    for row in csv_reader:
+        if not row or len(row) <= max(COLUMNS.values()):
+            continue
+            
+        # Create a dictionary for this row with column names as keys
+        row_dict = {col_name: row[col_idx] for col_name, col_idx in COLUMNS.items()}
+        result.append(row_dict)
+    
+    logging.info(f"Processed {len(result)} rows into dictionary format")
+    logging.info(f"Result is: {result[:5]}")
+    return result
+
 
   # TODO: Move to protocol class
   async def _receive_csv_batch(self, sock, proto):
@@ -113,30 +147,35 @@ class Boundary:
 # ----------------------------------------------------------------------- #
 
   async def _setup_rabbitmq(self, retry_count=1):
-    # Connect to RabbitMQ
     connected = await self.rabbitmq.connect()
     if not connected:
         logging.error(f"Failed to connect to RabbitMQ, retrying in {retry_count} seconds...")
         await asyncio.sleep(2 ** retry_count)
         return await self._setup_rabbitmq(retry_count + 1)
     
-    # Just declare the queue - no need for exchange or binding
     await self.rabbitmq.declare_queue(self._queue_name, durable=True)
 
+  
   async def _send_data_to_rabbitmq_queue(self, data):
     """
-    Send the data data directly to RabbitMQ queue
+    Send the data to RabbitMQ queue after serializing it
     """
-    success = await self.rabbitmq.publish_to_queue(
-        queue_name=self._queue_name,
-        message=data,
-        persistent=True
-    )
-    
-    if success:
-        logging.info(f"Data published to RabbitMQ queue ({len(data)} bytes)")
-    else:
-        logging.error(f"Failed to publish data to RabbitMQ")
+    try:
+        # Serialize the data to binary
+        serialized_data = Serializer.serialize(data)
+        
+        success = await self.rabbitmq.publish_to_queue(
+            queue_name=self._queue_name,
+            message=serialized_data,
+            persistent=True
+        )
+        
+        if success:
+            logging.info(f"Data published to RabbitMQ queue ({len(data)} rows)")
+        else:
+            logging.error(f"Failed to publish data to RabbitMQ")
+    except Exception as e:
+        logging.error(f"Error publishing to queue '{self._queue_name}': {e}")
          
 # ------------------------------------------------------------------ #
 # graceful shutdown handler                                          #

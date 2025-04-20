@@ -14,7 +14,6 @@ services:
       - "5672:5672"
       - "15672:15672"
 
-
   boundary:
     build:
       context: ./server
@@ -26,6 +25,7 @@ services:
     volumes:
       - ./server/boundary:/app
       - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
       
   filter_by_year_worker:
     build:
@@ -35,6 +35,7 @@ services:
       - rabbitmq
     volumes:
       - ./server/worker/filter_by_year:/app
-      - ./server/rabbitmq:/app/rabbitmq 
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
     deploy:
       replicas: 2

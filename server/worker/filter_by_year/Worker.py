@@ -2,6 +2,7 @@ import asyncio
 import logging
 import signal
 from rabbitmq.Rabbitmq_client import RabbitMQClient
+from common.Serializer import Serializer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,16 +67,19 @@ class Worker:
     async def _process_message(self, message):
         """Process a message from the queue"""
         try:
-            # Get message body
-            body = message.body.decode('utf-8')
+            # Deserialize the message body from binary to Python object
+            data = Serializer.deserialize(message.body)
             
-            # For now, just log the first 100 characters of the message
-            preview = body[:100] + "..." if len(body) > 100 else body
-            logging.info(f"Received message: {preview}")
+            # Log the number of records received
+            logging.info(f"Received {len(data)} movie records to process")
             
-            # Process the message (for now, just print it)
-            # In a real application, you would parse the CSV data and filter by year
-            
+            # Process the movie data - preview first item
+            if data:
+                first_item = data[0]
+                logging.info(f"Sample record: {first_item}")
+                
+                # TODO: Implement actual filtering logic here
+                
             # Acknowledge message
             await message.ack()
             
