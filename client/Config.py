@@ -18,9 +18,9 @@ class Config:
             
         self.MOVIES = os.getenv("MOVIES")
         self.RATINGS = os.getenv("RATINGS")
-        self.CREW = os.getenv("CREW")
-        if not self.MOVIES or not self.RATINGS or not self.CREW:
-            raise ValueError("MOVIES, RATINGS, and CREW must be set in the environment")
+        self.CREDITS = os.getenv("CREDITS")
+        if not self.MOVIES or not self.RATINGS or not self.CREDITS:
+            raise ValueError("MOVIES, RATINGS, and CREDITS must be set in the environment")
         self.BATCH_SIZE = int(os.getenv("BATCH_SIZE") or 1024 * 1024)  # 1MB
         if not isinstance(self.BATCH_SIZE, int) or self.BATCH_SIZE <= 0:
             raise ValueError("BATCH_SIZE must be a positive integer")
@@ -38,8 +38,8 @@ class Config:
         return self.MOVIES
     def get_ratings(self):
         return self.RATINGS
-    def get_crew(self):
-        return self.CREW
+    def get_credits(self):
+        return self.CREDITS
     def get_batch_size(self):
         return self.BATCH_SIZE
     def get_host(self):
@@ -52,7 +52,7 @@ class Config:
         return {
             "MOVIES": self.MOVIES,
             "RATINGS": self.RATINGS,
-            "CREW": self.CREW,
+            "CREDITS": self.CREDITS,
             "BATCH_SIZE": self.BATCH_SIZE,
             "HOST": self.HOST,
             "PORT": self.PORT,

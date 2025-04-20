@@ -16,7 +16,7 @@ def main():
     try:
         client.send_csv(config.get_movies())
         # client.send_csv(config.get_ratings())
-        # client.send_csv(config.get_crew())
+        # client.send_csv(config.get_credits())
         logging.info("\033[92mAll CSV files sent successfully\033[0m")
         data = client.recv_response()
         logging.info(f"Received data: {data}")
