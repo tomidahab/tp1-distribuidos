@@ -108,23 +108,23 @@ class Worker:
             message=Serializer.serialize(data),
             persistent=True
         )
-
     def _filter_data(self, data):
         """Filter data into two lists based on the year"""
         data_eq_year, data_eq_gt_year = [], []
         for record in data:
-            logging.info(f"Processing record: {record}")
+            # logging.info(f"Processing record: {record}")
             year = int(record.get(RELEASE_DATE).split("-")[0])
             logging.info(f"Year extracted: {year}")
-            # Filter records based on the year
+            del record[RELEASE_DATE]
             if year == YEAR:
                 data_eq_year.append(record)
                 data_eq_gt_year.append(record)
             elif year > YEAR:
                 data_eq_gt_year.append(record)
+            logging.info(f"Record processed: {record}")
         
         return data_eq_year, data_eq_gt_year
-    
+        
     def _handle_shutdown(self, *_):
         """Handle shutdown signals"""
         logging.info(f"Shutting down worker...")
