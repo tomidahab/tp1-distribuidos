@@ -12,7 +12,10 @@ logging.basicConfig(
 
 #TODO move this to a common config file or common env var since boundary hasthis too
 BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
-
+YEAR = 2000
+EQ_YEAR_QUEUE_NAME = "eq_year"
+EQ_GT_YEAR_QUEUE_NAME = "eq_gt_year"
+RELEASE_DATE = "release_date"
 
 class Worker:
     def __init__(self, queue_name=BOUNDARY_QUEUE_NAME):
@@ -75,11 +78,13 @@ class Worker:
             
             # Process the movie data - preview first item
             if data:
-                first_item = data[0]
-                logging.info(f"Sample record: {first_item}")
-                
-                # TODO: Implement actual filtering logic here
-                
+                data_eq_year, data_eq_gt_year = self._filter_data(data)
+                if data_eq_year:
+                    await self.send_eq_year(data_eq_year)
+                if data_eq_gt_year:
+                    await self.send_eq_gt_year(data_eq_gt_year)
+                logging.info(f"Sent {len(data_eq_year)} records to eq_year queue")
+                logging.info(f"Sent {len(data_eq_gt_year)} records to eq_gt_year queue")
             # Acknowledge message
             await message.ack()
             
@@ -87,6 +92,38 @@ class Worker:
             logging.error(f"Error processing message: {e}")
             # Reject the message and requeue it
             await message.reject(requeue=True)
+
+    async def send_eq_year(self, data):
+        """Send data to the eq_year queue"""
+        await self.rabbitmq.publish_to_queue(
+            queue_name=EQ_YEAR_QUEUE_NAME,
+            message=Serializer.serialize(data),
+            persistent=True
+        )
+
+    async def send_eq_gt_year(self, data):
+        """Send data to the eq_gt_year queue"""
+        await self.rabbitmq.publish_to_queue(
+            queue_name=EQ_GT_YEAR_QUEUE_NAME,
+            message=Serializer.serialize(data),
+            persistent=True
+        )
+
+    def _filter_data(self, data):
+        """Filter data into two lists based on the year"""
+        data_eq_year, data_eq_gt_year = [], []
+        for record in data:
+            logging.info(f"Processing record: {record}")
+            year = int(record.get(RELEASE_DATE).split("-")[0])
+            logging.info(f"Year extracted: {year}")
+            # Filter records based on the year
+            if year == YEAR:
+                data_eq_year.append(record)
+                data_eq_gt_year.append(record)
+            elif year > YEAR:
+                data_eq_gt_year.append(record)
+        
+        return data_eq_year, data_eq_gt_year
     
     def _handle_shutdown(self, *_):
         """Handle shutdown signals"""
