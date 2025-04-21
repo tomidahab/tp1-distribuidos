@@ -14,13 +14,13 @@ logging.basicConfig(
 BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
 YEAR = 2000
 EQ_YEAR_QUEUE_NAME = "eq_year"
-EQ_GT_YEAR_QUEUE_NAME = "eq_gt_year"
+GT_YEAR_QUEUE_NAME = "gt_year"
 RELEASE_DATE = "release_date"
 EXCHANGE_NAME_PRODUCER = "filtered_by_year_exchange"
 EXCHANGE_TYPE_PRODUCER = "direct"
 
 class Worker:
-    def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[BOUNDARY_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[EQ_YEAR_QUEUE_NAME, EQ_GT_YEAR_QUEUE_NAME]):
+    def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[BOUNDARY_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[EQ_YEAR_QUEUE_NAME, GT_YEAR_QUEUE_NAME]):
 
         self._running = True
         self.consumer_queue_names = consumer_queue_names
@@ -121,18 +121,17 @@ class Worker:
             # Deserialize the message body from binary to Python object
             data = Serializer.deserialize(message.body)
             
-            # Log the number of records received
-            logging.info(f"Received {len(data)} movie records to process")
-            
             # Process the movie data - preview first item
             if data:
-                data_eq_year, data_eq_gt_year = self._filter_data(data)
+                data_eq_year, data_gt_year = self._filter_data(data)
                 if data_eq_year:
                     await self.send_eq_year(data_eq_year)
-                if data_eq_gt_year:
-                    await self.send_eq_gt_year(data_eq_gt_year)
+                if data_gt_year:
+                    await self.send_gt_year(data_gt_year)
                 logging.info(f"Sent {len(data_eq_year)} records to eq_year queue")
-                logging.info(f"Sent {len(data_eq_gt_year)} records to eq_gt_year queue")
+                logging.info(f"Processed data_eq_year: {data_eq_year}")
+                logging.info(f"Sent {len(data_gt_year)} records to gt_year queue")
+                logging.info(f"Processed data_gt_year: {data_gt_year}")
             # Acknowledge message
             await message.ack()
             
@@ -149,27 +148,25 @@ class Worker:
             persistent=True
         )
 
-    async def send_eq_gt_year(self, data):
-        """Send data to the eq_gt_year queue in our exchange"""
+    async def send_gt_year(self, data):
+        """Send data to the gt_year queue in our exchange"""
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
-            routing_key=EQ_GT_YEAR_QUEUE_NAME,
+            routing_key=GT_YEAR_QUEUE_NAME,
             message=Serializer.serialize(data),
             persistent=True
         )
 
     def _filter_data(self, data):
         """Filter data into two lists based on the year"""
-        data_eq_year, data_eq_gt_year = [], []
+        data_eq_year, data_gt_year = [], []
         for record in data:
             year = int(record.pop(RELEASE_DATE, None).split("-")[0])
             if year == YEAR:
                 data_eq_year.append(record)
-                data_eq_gt_year.append(record)
             elif year > YEAR:
-                data_eq_gt_year.append(record)
-            logging.info(f"Record processed: {record}")
+                data_gt_year.append(record)
         
-        return data_eq_year, data_eq_gt_year
+        return data_eq_year, data_gt_year
         
     def _handle_shutdown(self, *_):
         """Handle shutdown signals"""

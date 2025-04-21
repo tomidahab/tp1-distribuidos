@@ -13,13 +13,12 @@ logging.basicConfig(
 
 #TODO move this to a common config file or common env var since boundary hasthis too
 EQ_YEAR_QUEUE_NAME = "eq_year"
-EQ_GT_YEAR_QUEUE_NAME = "eq_gt_year"
+GT_YEAR_QUEUE_NAME = "gt_year"
 PRODUCTION_COUNTRIES = "production_countries"
-RESPONSE_QUEUE = "response_queue"
 EQ_ONE_COUNTRY_QUEUE_NAME = "eq_one_country"
-EQ_N_COUNTRIES_QUEUE_NAME = "eq_n_countries"
-ONE_COUNTRY = "ARG"
-N_COUNTRIES = ["ARG", "ESP"]
+RESPONSE_QUEUE = "response_queue"
+ONE_COUNTRY = "AR"
+N_COUNTRIES = ["AR", "ES"]
 ISO_3166_1 = "iso_3166_1"
 EXCHANGE_NAME_CONSUMER = "filtered_by_year_exchange"
 EXCHANGE_TYPE_CONSUMER = "direct"
@@ -27,7 +26,7 @@ EXCHANGE_NAME_PRODUCER = "filtered_by_country_exchange"
 EXCHANGE_TYPE_PRODUCER = "direct"
 
 class Worker:
-    def __init__(self, exchange_name_consumer=EXCHANGE_NAME_CONSUMER, exchange_type_consumer=EXCHANGE_TYPE_CONSUMER, consumer_queue_names=[EQ_YEAR_QUEUE_NAME, EQ_GT_YEAR_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[EQ_ONE_COUNTRY_QUEUE_NAME, EQ_N_COUNTRIES_QUEUE_NAME]):
+    def __init__(self, exchange_name_consumer=EXCHANGE_NAME_CONSUMER, exchange_type_consumer=EXCHANGE_TYPE_CONSUMER, consumer_queue_names=[EQ_YEAR_QUEUE_NAME, GT_YEAR_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[EQ_ONE_COUNTRY_QUEUE_NAME, RESPONSE_QUEUE]):
 
         self._running = True
         self.consumer_queue_names = consumer_queue_names
@@ -84,7 +83,7 @@ class Worker:
         for queue_name in self.consumer_queue_names:
             queue = await self.rabbitmq.declare_queue(queue_name, durable=True)
             if not queue:
-                return False        
+                return False
             # Bind queues to exchange
             success = await self.rabbitmq.bind_queue(
                 queue_name=queue_name,
@@ -128,35 +127,57 @@ class Worker:
 
         # Set up consumers
         for queue_name in self.consumer_queue_names:
-            success = await self.rabbitmq.consume(
-                queue_name=queue_name,
-                callback=self._process_message,
-                no_ack=False
-            )
-            if not success:
-                logging.error(f"Failed to set up consumer for queue '{queue_name}'")
-                return False
-
+            if queue_name == EQ_YEAR_QUEUE_NAME:
+                success = await self.rabbitmq.consume(
+                    queue_name=queue_name,
+                    callback=self._process_message_for_eq_year,
+                    no_ack=False
+                )
+                if not success:
+                    logging.error(f"Failed to set up consumer for queue '{queue_name}'")
+                    return False
+            elif queue_name == GT_YEAR_QUEUE_NAME:
+                success = await self.rabbitmq.consume(
+                    queue_name=queue_name,
+                    callback=self._process_message_for_gt_year,
+                    no_ack=False
+                )
+                if not success:
+                    logging.error(f"Failed to set up consumer for queue '{queue_name}'")
+                    return False
         return True
     
-    async def _process_message(self, message):
-        """Process a message from the queue"""
+    async def _process_message_for_gt_year(self, message):
         try:
-            # Deserialize the message body from binary to Python object
             data = Serializer.deserialize(message.body)
             
-            # Log the number of records received
-            logging.info(f"Received {len(data)} movie records to process")
-            
-            # Process the movie data - preview first item
             if data:
-                data_eq_one_country, data_eq_n_countries = self._filter_data(data)
+                data_eq_one_country, _ = self._filter_data(data)
                 if data_eq_one_country:
                     await self.send_eq_one_country(data_eq_one_country)
-                if data_eq_n_countries:
-                    await self.send_eq_n_countries(data_eq_n_countries)
                 logging.info(f"Sent {len(data_eq_one_country)} records to eq_one_country queue")
-                logging.info(f"Sent {len(data_eq_n_countries)} records to eq_n_countries queue")
+                logging.info(f"Processed data_eq_one_country: {data_eq_one_country}")
+            # Acknowledge message
+            await message.ack()
+        except Exception as e:
+            logging.error(f"Error processing message: {e}")
+            # Reject the message and requeue it
+            await message.reject(requeue=True)
+
+    async def _process_message_for_eq_year(self, message):
+        try:
+            data = Serializer.deserialize(message.body)
+            
+            if data:
+                data_eq_one_country, data_response_queue = self._filter_data(data)
+                if data_eq_one_country:
+                    await self.send_eq_one_country(data_eq_one_country)
+                if data_response_queue:
+                    await self.send_response_queue(data_response_queue)
+                logging.info(f"Sent {len(data_eq_one_country)} records to eq_one_country queue")
+                logging.info(f"Processed data_eq_one_country: {data_eq_one_country}")
+                logging.info(f"Sent {len(data_response_queue)} records to response_queue queue")
+                logging.info(f"Processed data_response_queue: {data_response_queue}")
             # Acknowledge message
             await message.ack()
             
@@ -173,25 +194,23 @@ class Worker:
             persistent=True
         )
 
-    async def send_eq_n_countries(self, data):
-        """Send data to the eq_gt_year queue in our exchange"""
+    async def send_response_queue(self, data):
+        """Send data to the gt_year queue in our exchange"""
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
-            routing_key=EQ_N_COUNTRIES_QUEUE_NAME,
+            routing_key=RESPONSE_QUEUE,
             message=Serializer.serialize(data),
             persistent=True
         )
 
+    # TODO: Add a optional parameter to the function for one country filtering
     def _filter_data(self, data):
         """Filter data into two lists based on the country"""
-        data_eq_one_country, data_eq_n_countries = [], []
+        data_eq_one_country, data_response_queue = [], []
         for record in data:
             countries = (record.pop(PRODUCTION_COUNTRIES, None))
-            logging.info(f"countries: {countries}")
             if countries is None:
                 logging.error(f"Record missing '{PRODUCTION_COUNTRIES}' field: {record}")
                 continue
-
-            logging.info(f"Type of countries: {type(countries)}")
             
             # Ensure countries is a list of dictionaries
             if isinstance(countries, str):
@@ -207,7 +226,6 @@ class Worker:
                 logging.error(f"Countries is not a list after processing: {countries}")
                 continue
                 
-            logging.info(f"Processing countries: {countries}")
             record_copy = record.copy()  # Create a copy to avoid duplicating the same reference
             
             for country_obj in countries:
@@ -217,14 +235,12 @@ class Worker:
                     
                 if ISO_3166_1 in country_obj:
                     country = country_obj.get(ISO_3166_1)
-                    logging.info(f"Found country code: {country}")
                     if country == ONE_COUNTRY:
                         data_eq_one_country.append(record_copy)
                     elif country in N_COUNTRIES:
-                        data_eq_n_countries.append(record_copy)
-            # logging.info(f"Record processed: {record}")
+                        data_response_queue.append(record_copy)
         
-        return data_eq_one_country, data_eq_n_countries
+        return data_eq_one_country, data_response_queue
         
     def _handle_shutdown(self, *_):
         """Handle shutdown signals"""
