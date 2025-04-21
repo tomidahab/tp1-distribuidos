@@ -14,7 +14,8 @@ class RabbitMQClient:
         self._channel: Optional[aio_pika.Channel] = None
         self._exchanges: Dict[str, aio_pika.Exchange] = {}
         self._queues: Dict[str, aio_pika.Queue] = {}
-        
+        self._consumers = {}
+
         logging.info(f"RabbitMQ client initialized for {host}:{port}")
     
     async def connect(self) -> bool:
@@ -37,9 +38,30 @@ class RabbitMQClient:
     
     async def close(self):
         """Close the RabbitMQ connection"""
-        if self._connection and not self._connection.is_closed:
-            await self._connection.close()
+        try:
+            # Clean up consumers first
+            for consumer in self._consumers.values():
+                try:
+                    # Cancel consumer if possible
+                    if hasattr(consumer, 'cancel'):
+                        await consumer.cancel()
+                except Exception as e:
+                    logging.warning(f"Error cancelling consumer: {e}")
+                    
+            self._consumers.clear()
+                
+            # Then close channel and connection
+            if self._channel:
+                await self._channel.close()
+                self._channel = None
+                
+            if self._connection and not self._connection.is_closed:
+                await self._connection.close()
+                self._connection = None
+                
             logging.info("RabbitMQ connection closed")
+        except Exception as e:
+            logging.error(f"Error closing RabbitMQ connection: {e}")
     
     async def declare_exchange(self, name: str, exchange_type=aio_pika.ExchangeType.DIRECT, 
                              durable=True) -> Optional[aio_pika.Exchange]:
@@ -136,14 +158,22 @@ class RabbitMQClient:
     async def consume(self, queue_name: str, callback, no_ack=False):
         """Set up consumer for a queue"""
         try:
+            if not self._channel:
+                if not await self.connect():
+                    return False
+                    
             if queue_name not in self._queues:
                 queue = await self.declare_queue(queue_name)
                 if not queue:
                     return False
             else:
                 queue = self._queues[queue_name]
-                
-            await queue.consume(callback=callback, no_ack=no_ack)
+            
+            self._consumers[queue_name] = await queue.consume(
+                callback=callback,
+                no_ack=no_ack
+            )
+            
             logging.info(f"Consumer set up for queue '{queue_name}'")
             return True
         except Exception as e:

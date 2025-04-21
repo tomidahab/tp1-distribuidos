@@ -13,6 +13,7 @@ from common.Serializer import Serializer
 BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
 COLUMNS = {'genres': 3, 'imdb_id':6, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
 EOF_MARKER = "EOF_MARKER"
+RESPONSE_QUEUE = "response_queue"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,10 +53,14 @@ class Boundary:
     
     # Set up RabbitMQ
     await self._setup_rabbitmq()
-    
+
+    # Start response queue consumer task
+    asyncio.create_task(self._handle_response_queue())
+
     while self._running:
       try:
         client_sock, addr = await loop.sock_accept(self._server_socket)
+        client_id = uuid.uuid4()
       except asyncio.CancelledError:
         break
       except Exception as exc:
@@ -63,16 +68,67 @@ class Boundary:
         continue
 
       logging.info(f"New client {addr[0]}:{addr[1]}")
-      self._client_sockets.append(client_sock)
-      asyncio.create_task(self._handle_client_connection(client_sock, addr))
+      self._client_sockets.append({client_id: client_sock})
+      asyncio.create_task(self._handle_client_connection(client_sock, addr, client_id))
+
+
+# ------------------------------------------------------------------ #
+# response queue consumer logic                                      #
+# ------------------------------------------------------------------ #
+  async def _handle_response_queue(self):
+    """
+    Handle messages from the response queue.
+    This method blocks waiting for messages without consuming CPU.
+    """
+    try:
+        logging.info(self.green(f"Client_socket: {self._client_sockets}"))
+        
+        # Set up consumer - this blocks waiting for messages
+        await self.rabbitmq.consume(
+            queue_name=RESPONSE_QUEUE,
+            callback=self._process_response_message,
+            no_ack=False
+        )
+        
+        logging.info(self.green(f"Started consuming from {RESPONSE_QUEUE}"))
+        
+        # Keep this task alive while the service is running
+        while self._running:
+            await asyncio.sleep(1)
+            
+    except Exception as e:
+        logging.error(f"Error in response queue handler: {e}")
+
+  async def _process_response_message(self, message):
+    """Process messages from the response queue"""
+    try:
+        # Deserialize the message
+        data = Serializer.deserialize(message.body)
+        
+        # Save complete data to a file in the mounted volume
+        timestamp = int(asyncio.get_event_loop().time())
+        output_file = f"/app/output_records_{timestamp}.json"
+        
+        import json
+        with open(output_file, "w") as f:
+            json.dump(data, f, indent=2)
+        
+        logging.info(self.green(f"Saved {len(data)} records to {output_file}"))
+        
+        # Acknowledge message
+        await message.ack()
+        
+    except Exception as e:
+        logging.error(f"Error processing response message: {e}")
+        # Reject message but don't requeue
+        await message.reject(requeue=False)
 
 # ------------------------------------------------------------------ #
 # per‑client logic                                                   #
 # ------------------------------------------------------------------ #
-  async def _handle_client_connection(self, sock, addr):
+  async def _handle_client_connection(self, sock, addr, client_id=None):
     loop = asyncio.get_running_loop()
     proto = self.protocol(loop)
-    client_id = uuid.uuid4()
     logging.info(self.green(f"Client ID: {client_id} successfully started"))
     try:
         data = ''
@@ -154,6 +210,8 @@ class Boundary:
         return await self._setup_rabbitmq(retry_count + 1)
     
     await self.rabbitmq.declare_queue(self._queue_name, durable=True)
+    await self.rabbitmq.declare_queue(RESPONSE_QUEUE, durable=True)
+    
 
   
   async def _send_data_to_rabbitmq_queue(self, data):
