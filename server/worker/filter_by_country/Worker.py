@@ -3,6 +3,7 @@ import logging
 import signal
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
+import ast
 
 logging.basicConfig(
     level=logging.INFO,
@@ -11,16 +12,22 @@ logging.basicConfig(
 )
 
 #TODO move this to a common config file or common env var since boundary hasthis too
-BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
-YEAR = 2000
 EQ_YEAR_QUEUE_NAME = "eq_year"
 EQ_GT_YEAR_QUEUE_NAME = "eq_gt_year"
-RELEASE_DATE = "release_date"
-EXCHANGE_NAME_PRODUCER = "filtered_by_year_exchange"
+PRODUCTION_COUNTRIES = "production_countries"
+RESPONSE_QUEUE = "response_queue"
+EQ_ONE_COUNTRY_QUEUE_NAME = "eq_one_country"
+EQ_N_COUNTRIES_QUEUE_NAME = "eq_n_countries"
+ONE_COUNTRY = "ARG"
+N_COUNTRIES = ["ARG", "ESP"]
+ISO_3166_1 = "iso_3166_1"
+EXCHANGE_NAME_CONSUMER = "filtered_by_year_exchange"
+EXCHANGE_TYPE_CONSUMER = "direct"
+EXCHANGE_NAME_PRODUCER = "filtered_by_country_exchange"
 EXCHANGE_TYPE_PRODUCER = "direct"
 
 class Worker:
-    def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[BOUNDARY_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[EQ_YEAR_QUEUE_NAME, EQ_GT_YEAR_QUEUE_NAME]):
+    def __init__(self, exchange_name_consumer=EXCHANGE_NAME_CONSUMER, exchange_type_consumer=EXCHANGE_TYPE_CONSUMER, consumer_queue_names=[EQ_YEAR_QUEUE_NAME, EQ_GT_YEAR_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[EQ_ONE_COUNTRY_QUEUE_NAME, EQ_N_COUNTRIES_QUEUE_NAME]):
 
         self._running = True
         self.consumer_queue_names = consumer_queue_names
@@ -64,11 +71,28 @@ class Worker:
         
         # -------------------- CONSUMER --------------------
 
-        # In this worker there is no exchange consumer
+        # Declare exchange (idempotent operation)
+        exchange = await self.rabbitmq.declare_exchange(
+            name=self.exchange_name_consumer,
+            exchange_type=self.exchange_type_consumer,
+            durable=True
+        )
+        if not exchange:
+            logging.error(f"Failed to declare exchange '{self.exchange_name_consumer}'")
+            return False
         # Declare queues (idempotent operation)
         for queue_name in self.consumer_queue_names:
             queue = await self.rabbitmq.declare_queue(queue_name, durable=True)
             if not queue:
+                return False        
+            # Bind queues to exchange
+            success = await self.rabbitmq.bind_queue(
+                queue_name=queue_name,
+                exchange_name=self.exchange_name_consumer,
+                routing_key=queue_name
+            )
+            if not success:
+                logging.error(f"Failed to bind queue '{queue_name}' to exchange '{self.exchange_name_consumer}'")
                 return False
         # --------------------------------------------------
 
@@ -126,13 +150,13 @@ class Worker:
             
             # Process the movie data - preview first item
             if data:
-                data_eq_year, data_eq_gt_year = self._filter_data(data)
-                if data_eq_year:
-                    await self.send_eq_year(data_eq_year)
-                if data_eq_gt_year:
-                    await self.send_eq_gt_year(data_eq_gt_year)
-                logging.info(f"Sent {len(data_eq_year)} records to eq_year queue")
-                logging.info(f"Sent {len(data_eq_gt_year)} records to eq_gt_year queue")
+                data_eq_one_country, data_eq_n_countries = self._filter_data(data)
+                if data_eq_one_country:
+                    await self.send_eq_one_country(data_eq_one_country)
+                if data_eq_n_countries:
+                    await self.send_eq_n_countries(data_eq_n_countries)
+                logging.info(f"Sent {len(data_eq_one_country)} records to eq_one_country queue")
+                logging.info(f"Sent {len(data_eq_n_countries)} records to eq_n_countries queue")
             # Acknowledge message
             await message.ack()
             
@@ -141,35 +165,66 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_eq_year(self, data):
-        """Send data to the eq_year queue in our exchange"""
+    async def send_eq_one_country(self, data):
+        """Send data to the eq_one_country queue in our exchange"""
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
-            routing_key=EQ_YEAR_QUEUE_NAME,
+            routing_key=EQ_ONE_COUNTRY_QUEUE_NAME,
             message=Serializer.serialize(data),
             persistent=True
         )
 
-    async def send_eq_gt_year(self, data):
+    async def send_eq_n_countries(self, data):
         """Send data to the eq_gt_year queue in our exchange"""
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
-            routing_key=EQ_GT_YEAR_QUEUE_NAME,
+            routing_key=EQ_N_COUNTRIES_QUEUE_NAME,
             message=Serializer.serialize(data),
             persistent=True
         )
 
     def _filter_data(self, data):
-        """Filter data into two lists based on the year"""
-        data_eq_year, data_eq_gt_year = [], []
+        """Filter data into two lists based on the country"""
+        data_eq_one_country, data_eq_n_countries = [], []
         for record in data:
-            year = int(record.pop(RELEASE_DATE, None).split("-")[0])
-            if year == YEAR:
-                data_eq_year.append(record)
-                data_eq_gt_year.append(record)
-            elif year > YEAR:
-                data_eq_gt_year.append(record)
-            logging.info(f"Record processed: {record}")
+            countries = (record.pop(PRODUCTION_COUNTRIES, None))
+            logging.info(f"countries: {countries}")
+            if countries is None:
+                logging.error(f"Record missing '{PRODUCTION_COUNTRIES}' field: {record}")
+                continue
+
+            logging.info(f"Type of countries: {type(countries)}")
+            
+            # Ensure countries is a list of dictionaries
+            if isinstance(countries, str):
+                # If it's a string that looks like a list, try to evaluate it
+                try:
+                    countries = ast.literal_eval(countries)
+                except (SyntaxError, ValueError):
+                    logging.error(f"Failed to parse countries string: {countries}")
+                    continue
+
+            # Ensure we have a valid list to work with
+            if not isinstance(countries, list):
+                logging.error(f"Countries is not a list after processing: {countries}")
+                continue
+                
+            logging.info(f"Processing countries: {countries}")
+            record_copy = record.copy()  # Create a copy to avoid duplicating the same reference
+            
+            for country_obj in countries:
+                if not isinstance(country_obj, dict):
+                    logging.warning(f"Country object is not a dictionary: {country_obj}")
+                    continue
+                    
+                if ISO_3166_1 in country_obj:
+                    country = country_obj.get(ISO_3166_1)
+                    logging.info(f"Found country code: {country}")
+                    if country == ONE_COUNTRY:
+                        data_eq_one_country.append(record_copy)
+                    elif country in N_COUNTRIES:
+                        data_eq_n_countries.append(record_copy)
+            # logging.info(f"Record processed: {record}")
         
-        return data_eq_year, data_eq_gt_year
+        return data_eq_one_country, data_eq_n_countries
         
     def _handle_shutdown(self, *_):
         """Handle shutdown signals"""

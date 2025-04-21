@@ -118,7 +118,7 @@ class RabbitMQClient:
             else:
                 exchange = self._exchanges[exchange_name]
             
-            message_body = message.encode() if isinstance(message, str) else message
+            message_body = message.encode('utf-8') if isinstance(message, str) else message
             
             await exchange.publish(
                 aio_pika.Message(
