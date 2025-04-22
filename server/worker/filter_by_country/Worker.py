@@ -155,8 +155,6 @@ class Worker:
                 data_eq_one_country, _ = self._filter_data(data)
                 if data_eq_one_country:
                     await self.send_eq_one_country(data_eq_one_country)
-                logging.info(f"Sent {len(data_eq_one_country)} records to eq_one_country queue")
-                logging.info(f"Processed data_eq_one_country: {data_eq_one_country}")
             # Acknowledge message
             await message.ack()
         except Exception as e:
@@ -174,10 +172,6 @@ class Worker:
                     await self.send_eq_one_country(data_eq_one_country)
                 if data_response_queue:
                     await self.send_response_queue(data_response_queue)
-                logging.info(f"Sent {len(data_eq_one_country)} records to eq_one_country queue")
-                logging.info(f"Processed data_eq_one_country: {data_eq_one_country}")
-                logging.info(f"Sent {len(data_response_queue)} records to response_queue queue")
-                logging.info(f"Processed data_response_queue: {data_response_queue}")
             # Acknowledge message
             await message.ack()
             
@@ -209,24 +203,23 @@ class Worker:
         for record in data:
             countries = (record.pop(PRODUCTION_COUNTRIES, None))
             if countries is None:
-                logging.error(f"Record missing '{PRODUCTION_COUNTRIES}' field: {record}")
+                logging.info(f"Record missing '{PRODUCTION_COUNTRIES}' field: {record}")
                 continue
             
-            # Ensure countries is a list of dictionaries
             if isinstance(countries, str):
-                # If it's a string that looks like a list, try to evaluate it
                 try:
                     countries = ast.literal_eval(countries)
                 except (SyntaxError, ValueError):
                     logging.error(f"Failed to parse countries string: {countries}")
                     continue
 
-            # Ensure we have a valid list to work with
             if not isinstance(countries, list):
                 logging.error(f"Countries is not a list after processing: {countries}")
                 continue
-                
-            record_copy = record.copy()  # Create a copy to avoid duplicating the same reference
+                    
+            record_copy = record.copy()
+            has_one_country = False
+            found_countries = set()
             
             for country_obj in countries:
                 if not isinstance(country_obj, dict):
@@ -236,10 +229,20 @@ class Worker:
                 if ISO_3166_1 in country_obj:
                     country = country_obj.get(ISO_3166_1)
                     if country == ONE_COUNTRY:
-                        data_eq_one_country.append(record_copy)
-                    elif country in N_COUNTRIES:
-                        data_response_queue.append(record_copy)
-        
+                        has_one_country = True
+                    if country in N_COUNTRIES:
+                        found_countries.add(country)
+            
+            if has_one_country:
+                data_eq_one_country.append(record_copy)
+                
+            # Only add records that contain ALL countries from N_COUNTRIES
+            # logging.info(f"Found countries in record: {len(found_countries)}")
+            # logging.info(f"Found countries in record: {found_countries}")
+            if found_countries == set(N_COUNTRIES):
+                logging.info(f"Record contains all countries from N_COUNTRIES: {record_copy}")
+                data_response_queue.append(record_copy)
+            
         return data_eq_one_country, data_response_queue
         
     def _handle_shutdown(self, *_):

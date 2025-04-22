@@ -12,7 +12,8 @@ logging.basicConfig(
 
 #TODO move this to a common config file or common env var since boundary hasthis too
 BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
-YEAR = 2000
+MIN_YEAR = 2000
+MAX_YEAR = 2010
 EQ_YEAR_QUEUE_NAME = "eq_year"
 GT_YEAR_QUEUE_NAME = "gt_year"
 RELEASE_DATE = "release_date"
@@ -128,10 +129,6 @@ class Worker:
                     await self.send_eq_year(data_eq_year)
                 if data_gt_year:
                     await self.send_gt_year(data_gt_year)
-                logging.info(f"Sent {len(data_eq_year)} records to eq_year queue")
-                logging.info(f"Processed data_eq_year: {data_eq_year}")
-                logging.info(f"Sent {len(data_gt_year)} records to gt_year queue")
-                logging.info(f"Processed data_gt_year: {data_gt_year}")
             # Acknowledge message
             await message.ack()
             
@@ -159,14 +156,38 @@ class Worker:
     def _filter_data(self, data):
         """Filter data into two lists based on the year"""
         data_eq_year, data_gt_year = [], []
-        for record in data:
-            year = int(record.pop(RELEASE_DATE, None).split("-")[0])
-            if year == YEAR:
-                data_eq_year.append(record)
-            elif year > YEAR:
-                data_gt_year.append(record)
         
+        for record in data:
+            try:
+                release_date = str(record.get(RELEASE_DATE, ''))
+                if not release_date:
+                    continue
+                year_part = release_date.split("-")[0]
+                if not year_part:
+                    continue
+                    
+                year = int(year_part)
+                
+                del record[RELEASE_DATE]
+                
+                if self._query1(year):
+                    data_eq_year.append(record)
+                elif self._query2(year):
+                    data_gt_year.append(record)
+                    
+            except (ValueError, IndexError, AttributeError) as e:
+                logging.error(f"Error processing record {record}: {e}")
+                continue
+            
         return data_eq_year, data_gt_year
+    
+    def _query1(self, year):
+        """Check if the year is equal to the specified year"""
+        return MIN_YEAR <= year and year < MAX_YEAR
+    
+    def _query2(self, year):
+        """Check if the year is greater than the specified year"""
+        return year > MIN_YEAR
         
     def _handle_shutdown(self, *_):
         """Handle shutdown signals"""
