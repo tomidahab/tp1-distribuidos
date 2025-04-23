@@ -149,12 +149,17 @@ class Worker:
     
     async def _process_message_for_gt_year(self, message):
         try:
-            data = Serializer.deserialize(message.body)
+            # Deserialize the message
+            deserialized_message = Serializer.deserialize(message.body)
+            
+            # Extract clientId and data from the deserialized message
+            client_id = deserialized_message.get("clientId")
+            data = deserialized_message.get("data")
             
             if data:
                 data_eq_one_country, _ = self._filter_data(data)
                 if data_eq_one_country:
-                    await self.send_eq_one_country(data_eq_one_country)
+                    await self.send_eq_one_country(client_id, data_eq_one_country)
             # Acknowledge message
             await message.ack()
         except Exception as e:
@@ -164,14 +169,21 @@ class Worker:
 
     async def _process_message_for_eq_year(self, message):
         try:
-            data = Serializer.deserialize(message.body)
+            # Deserialize the message
+            deserialized_message = Serializer.deserialize(message.body)
+            
+            # Extract clientId and data from the deserialized message
+            client_id = deserialized_message.get("clientId")
+            data = deserialized_message.get("data")
+            
+            logging.info(f'client id in eq_year queue: {client_id}')
             
             if data:
                 data_eq_one_country, data_response_queue = self._filter_data(data)
                 if data_eq_one_country:
-                    await self.send_eq_one_country(data_eq_one_country)
+                    await self.send_eq_one_country(client_id, data_eq_one_country)
                 if data_response_queue:
-                    await self.send_response_queue(data_response_queue)
+                    await self.send_response_queue(client_id, data_response_queue)
             # Acknowledge message
             await message.ack()
             
@@ -180,21 +192,31 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_eq_one_country(self, data):
+    async def send_eq_one_country(self, client_id, data):
         """Send data to the eq_one_country queue in our exchange"""
+        message = self._addMetaData(client_id, data)
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
             routing_key=EQ_ONE_COUNTRY_QUEUE_NAME,
-            message=Serializer.serialize(data),
+            message=Serializer.serialize(message),
             persistent=True
         )
 
-    async def send_response_queue(self, data):
-        """Send data to the gt_year queue in our exchange"""
+    async def send_response_queue(self, client_id, data):
+        """Send data to the response queue in our exchange"""
+        message = self._addMetaData(client_id, data)
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
             routing_key=RESPONSE_QUEUE,
-            message=Serializer.serialize(data),
+            message=Serializer.serialize(message),
             persistent=True
         )
+
+    def _addMetaData(self, client_id, data):
+        """Add metadata to the message"""
+        message = {        
+            "clientId": client_id,
+            "data": data
+        }
+        return message
 
     # TODO: Add a optional parameter to the function for one country filtering
     def _filter_data(self, data):
@@ -240,7 +262,6 @@ class Worker:
             # logging.info(f"Found countries in record: {len(found_countries)}")
             # logging.info(f"Found countries in record: {found_countries}")
             if found_countries == set(N_COUNTRIES):
-                logging.info(f"Record contains all countries from N_COUNTRIES: {record_copy}")
                 data_response_queue.append(record_copy)
             
         return data_eq_one_country, data_response_queue

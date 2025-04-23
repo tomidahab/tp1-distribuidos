@@ -119,16 +119,20 @@ class Worker:
     async def _process_message(self, message):
         """Process a message from the queue"""
         try:
-            # Deserialize the message body from binary to Python object
-            data = Serializer.deserialize(message.body)
+            deserialized_message = Serializer.deserialize(message.body)
+            
+            # Extract clientId and data from the deserialized message
+            client_id = deserialized_message.get("clientId")
+            data = deserialized_message.get("data")
             
             # Process the movie data - preview first item
             if data:
                 data_eq_year, data_gt_year = self._filter_data(data)
                 if data_eq_year:
-                    await self.send_eq_year(data_eq_year)
+                    await self.send_eq_year(client_id, data_eq_year)
                 if data_gt_year:
-                    await self.send_gt_year(data_gt_year)
+                    await self.send_gt_year(client_id, data_gt_year)
+            
             # Acknowledge message
             await message.ack()
             
@@ -137,21 +141,30 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_eq_year(self, data):
+    async def send_eq_year(self, client_id, data):
         """Send data to the eq_year queue in our exchange"""
+        message = self._addMetaData(client_id, data)
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
             routing_key=EQ_YEAR_QUEUE_NAME,
-            message=Serializer.serialize(data),
+            message=Serializer.serialize(message),
             persistent=True
         )
 
-    async def send_gt_year(self, data):
+    async def send_gt_year(self, client_id, data):
         """Send data to the gt_year queue in our exchange"""
+        message = self._addMetaData(client_id, data)
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
             routing_key=GT_YEAR_QUEUE_NAME,
-            message=Serializer.serialize(data),
+            message=Serializer.serialize(message),
             persistent=True
         )
+
+    def _addMetaData(self,client_id, data):
+        message = {        
+        "clientId": client_id,
+        "data": data
+        }
+        return message
 
     def _filter_data(self, data):
         """Filter data into two lists based on the year"""
