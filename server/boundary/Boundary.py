@@ -105,15 +105,25 @@ class Boundary:
         # Deserialize the message
         data = Serializer.deserialize(message.body)
         
-        # Save complete data to a file in the mounted volume
-        timestamp = int(asyncio.get_event_loop().time())
-        output_file = f"/app/output_records_{timestamp}.json"
+        # Always write to the same file
+        output_file = "/app/output_records_client1.json"
         
         import json
-        with open(output_file, "w") as f:
+        import os
+        
+        # Check if file exists and has content
+        file_exists = os.path.exists(output_file) and os.path.getsize(output_file) > 0
+        
+        mode = "a" if file_exists else "w"
+        with open(output_file, mode) as f:
+            # If file already exists and has content, add a newline before appending
+            if file_exists:
+                f.write("\n")
+            
+            # Write the new data
             json.dump(data, f, indent=2)
         
-        logging.info(self.green(f"Saved {len(data)} records to {output_file}"))
+        logging.info(self.green(f"Appended {len(data)} records to {output_file}"))
         
         # Acknowledge message
         await message.ack()
@@ -179,7 +189,6 @@ class Boundary:
         result.append(row_dict)
     
     logging.info(f"Processed {len(result)} rows into dictionary format")
-    logging.info(f"Result is: {result[:5]}")
     return result
 
 
@@ -194,7 +203,6 @@ class Boundary:
 
     data_bytes = await proto.recv_exact(sock, msg_length)
     data = proto.decode(data_bytes)
-    # logging.info("CSV chunk received: %s", data[:50])  # show just the beginning
 
     return data
 
