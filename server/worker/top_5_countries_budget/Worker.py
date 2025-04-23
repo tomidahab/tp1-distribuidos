@@ -20,6 +20,10 @@ EXCHANGE_TYPE_PRODUCER = "direct"
 PRODUCTION_COUNTRIES = "production_countries"
 BUDGET = "budget"
 ISO_3166_1 = "iso_3166_1"
+EOF_MARKER = "EOF_MARKER"
+RESPONSE_QUEUE = "response_queue"
+
+
 
 class Worker:
     def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[BOUNDARY_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[RES_QUEUE]):
@@ -126,7 +130,11 @@ class Worker:
             
             # Process the movie data - preview first item
             if data:
-                self._filter_data(data)
+                if data != EOF_MARKER:
+                    self._filter_data(data)
+                else:
+                    logging.info("Received a EOF")
+                    await self.send_dic()
                 """if data_eq_year:
                     await self.send_eq_year(data_eq_year)
                 if data_gt_year:
@@ -143,25 +151,21 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_eq_year(self, data):
+    async def send_dic(self):
         """Send data to the eq_year queue in our exchange"""
+        top_5_countries = sorted(self.dictionary_countries_budget, key=self.dictionary_countries_budget.get, reverse=True)[:5]
+        logging.info(f"sending res = {str(top_5_countries)}")
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
-            routing_key=EQ_YEAR_QUEUE_NAME,
-            message=Serializer.serialize(data),
+            routing_key=RESPONSE_QUEUE,
+            message=Serializer.serialize(top_5_countries),
             persistent=True
         )
 
-    async def send_gt_year(self, data):
-        """Send data to the gt_year queue in our exchange"""
-        await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
-            routing_key=GT_YEAR_QUEUE_NAME,
-            message=Serializer.serialize(data),
-            persistent=True
-        )
 
     def _filter_data(self, data):
         """Filter data and puts it in its dictionary"""
         for record in data:
+            logging.info(f"record{str(record)}")
             budget = (record.pop(BUDGET, None))
             countries = (record.pop(PRODUCTION_COUNTRIES, None))
             if countries is None:

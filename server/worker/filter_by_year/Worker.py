@@ -18,6 +18,8 @@ GT_YEAR_QUEUE_NAME = "gt_year"
 RELEASE_DATE = "release_date"
 EXCHANGE_NAME_PRODUCER = "filtered_by_year_exchange"
 EXCHANGE_TYPE_PRODUCER = "direct"
+EOF_MARKER = "EOF_MARKER"
+
 
 class Worker:
     def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[BOUNDARY_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[EQ_YEAR_QUEUE_NAME, GT_YEAR_QUEUE_NAME]):
@@ -123,15 +125,16 @@ class Worker:
             
             # Process the movie data - preview first item
             if data:
-                data_eq_year, data_gt_year = self._filter_data(data)
-                if data_eq_year:
-                    await self.send_eq_year(data_eq_year)
-                if data_gt_year:
-                    await self.send_gt_year(data_gt_year)
-                logging.info(f"Sent {len(data_eq_year)} records to eq_year queue")
-                logging.info(f"Processed data_eq_year: {data_eq_year}")
-                logging.info(f"Sent {len(data_gt_year)} records to gt_year queue")
-                logging.info(f"Processed data_gt_year: {data_gt_year}")
+                if data != EOF_MARKER:
+                    data_eq_year, data_gt_year = self._filter_data(data)
+                    if data_eq_year:
+                        await self.send_eq_year(data_eq_year)
+                    if data_gt_year:
+                        await self.send_gt_year(data_gt_year)
+                    logging.info(f"Sent {len(data_eq_year)} records to eq_year queue")
+                    logging.info(f"Processed data_eq_year: {data_eq_year}")
+                    logging.info(f"Sent {len(data_gt_year)} records to gt_year queue")
+                    logging.info(f"Processed data_gt_year: {data_gt_year}")
             # Acknowledge message
             await message.ack()
             
@@ -159,7 +162,9 @@ class Worker:
     def _filter_data(self, data):
         """Filter data into two lists based on the year"""
         data_eq_year, data_gt_year = [], []
+        logging.info(f"record{str(data)}")
         for record in data:
+            logging.info(f"record{str(record)}")
             year = int(record.pop(RELEASE_DATE, None).split("-")[0])
             if year == YEAR:
                 data_eq_year.append(record)

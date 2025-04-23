@@ -14,6 +14,7 @@ BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
 COLUMNS = {'budget':2,'genres': 3, 'imdb_id':6, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
 EOF_MARKER = "EOF_MARKER"
 RESPONSE_QUEUE = "response_queue"
+TOP_5_BUDGET_QUEUE = "top5_countries_budget_workers"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -137,9 +138,10 @@ class Boundary:
                 data = await self._receive_csv_batch(sock, proto)
                 if data == EOF_MARKER:
                     logging.info(f"EOF received from client {addr[0]}:{addr[1]}")
+                    await self._send_data_to_rabbitmq_queue(data, [TOP_5_BUDGET_QUEUE])
                     break
                 filtered_data = self.project_to_columns(data)
-                await self._send_data_to_rabbitmq_queue(filtered_data)
+                await self._send_data_to_rabbitmq_queue(filtered_data, [self._queue_name,TOP_5_BUDGET_QUEUE])
             except ConnectionError:
                 logging.info(f"Client {addr[0]}:{addr[1]} disconnected")
                 break
@@ -214,26 +216,19 @@ class Boundary:
     
 
   
-  async def _send_data_to_rabbitmq_queue(self, data):
+  async def _send_data_to_rabbitmq_queue(self, data, queues):
     """
     Send the data to RabbitMQ queue after serializing it
     """
     try:
         # Serialize the data to binary
         serialized_data = Serializer.serialize(data)
-        
-        success = await self.rabbitmq.publish_to_queue(
-            queue_name=self._queue_name,
-            message=serialized_data,
-            persistent=True
-        )
-
-        # TODO Change this hardcoded
-        success = await self.rabbitmq.publish_to_queue(
-            queue_name="top5_countries_budget_workers",
-            message=serialized_data,
-            persistent=True
-        )
+        for queue in queues:
+          success = await self.rabbitmq.publish_to_queue(
+              queue_name=queue,
+              message=serialized_data,
+              persistent=True
+          )
         
         if success:
             logging.info(f"Data published to RabbitMQ queue ({len(data)} rows)")
