@@ -1,11 +1,12 @@
 from Client import Client
 import logging
 from Config import Config
+import time
 
 logging.basicConfig(level=logging.INFO)
 
 def main():
-    client = Client(name="John Doe", age=30)
+    client = Client(name="John_Doe", age=30)
     config = Config()
     try:
         client.connect(config.get_host(), config.get_port())
@@ -14,18 +15,31 @@ def main():
         return
     
     try:
-        client.send_csv(config.get_movies())
-        # client.send_csv(config.get_ratings())
-        # client.send_csv(config.get_credits())
-        logging.info("\033[92mAll CSV files sent successfully\033[0m")
-        data = client.recv_response()
-        logging.info(f"Received data: {data}")
-    except OSError as e:
-        logging.error(f"OS error: {e}")
+        # Start receiver thread first
+        client.start_receiver_thread()
         
+        # Define which files to send
+        files_to_send = [
+            config.get_movies(),
+            # config.get_ratings(),  # Uncomment to send more files
+            # config.get_credits(),
+        ]
+        
+        # Start sender thread and get the thread object
+        sender_thread = client.start_sender_thread(files_to_send)
+        
+        # Wait for sender to finish
+        sender_thread.join()
+        logging.info("Sender completed. Receiver still active. Press Ctrl+C to exit.")
+        
+        # Keep main thread running to allow receiver to continue
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            logging.info("Received interrupt, shutting down...")
     except Exception as e:
         logging.error(f"Error: {e}")
-        
     finally:
         client.shutdown()
 
