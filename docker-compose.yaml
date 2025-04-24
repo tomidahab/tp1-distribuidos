@@ -38,7 +38,7 @@ services:
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
     deploy:
-      replicas: 2
+      replicas: 1
 
   filter_by_country_worker:
     build:
@@ -51,4 +51,20 @@ services:
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
     deploy:
-      replicas: 2
+      replicas: 1
+
+  sentiment_analysis_worker:
+    build:
+      context: ./server
+      dockerfile: worker/sentiment_analysis/Dockerfile
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/worker/sentiment_analysis:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+      replicas: 1
