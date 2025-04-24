@@ -16,13 +16,13 @@ logging.basicConfig(
 load_dotenv()
 
 # Constants
-BOUNDARY_QUEUE_NAME = os.getenv("CONSUMER_QUEUE", "filter_by_year_workers")
+ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE")
 MIN_YEAR = 2000
 MAX_YEAR = 2010
 RELEASE_DATE = "release_date"
 
 # Router configuration - we now push to a single queue
-ROUTER_QUEUE = os.getenv("ROUTER_QUEUE", "router_input")
+ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_data_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
 
@@ -34,10 +34,10 @@ class Worker:
     def __init__(self, 
                  exchange_name_consumer=None, 
                  exchange_type_consumer=None, 
-                 consumer_queue_names=[BOUNDARY_QUEUE_NAME], 
+                 consumer_queue_names=[ROUTER_CONSUME_QUEUE], 
                  exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
                  exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
-                 producer_queue_name=ROUTER_QUEUE):
+                 producer_queue_name=ROUTER_PRODUCER_QUEUE):
 
         self._running = True
         self.consumer_queue_names = consumer_queue_names
