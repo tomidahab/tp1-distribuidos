@@ -1,8 +1,10 @@
 import asyncio
 import logging
 import signal
+import os
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
+from dotenv import load_dotenv
 
 logging.basicConfig(
     level=logging.INFO,
@@ -10,22 +12,36 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-#TODO move this to a common config file or common env var since boundary hasthis too
-BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
+# Load environment variables
+load_dotenv()
+
+# Constants
+BOUNDARY_QUEUE_NAME = os.getenv("CONSUMER_QUEUE", "filter_by_year_workers")
 MIN_YEAR = 2000
 MAX_YEAR = 2010
-EQ_YEAR_QUEUE_NAME = "eq_year"
-GT_YEAR_QUEUE_NAME = "gt_year"
 RELEASE_DATE = "release_date"
-EXCHANGE_NAME_PRODUCER = "filtered_by_year_exchange"
-EXCHANGE_TYPE_PRODUCER = "direct"
+
+# Router configuration - we now push to a single queue
+ROUTER_QUEUE = os.getenv("ROUTER_QUEUE", "router_input")
+EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_data_exchange")
+EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
+
+# Query types - used as metadata instead of separate queues
+QUERY_EQ_YEAR = "eq_year"
+QUERY_GT_YEAR = "gt_year"
 
 class Worker:
-    def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[BOUNDARY_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[EQ_YEAR_QUEUE_NAME, GT_YEAR_QUEUE_NAME]):
+    def __init__(self, 
+                 exchange_name_consumer=None, 
+                 exchange_type_consumer=None, 
+                 consumer_queue_names=[BOUNDARY_QUEUE_NAME], 
+                 exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
+                 exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
+                 producer_queue_name=ROUTER_QUEUE):
 
         self._running = True
         self.consumer_queue_names = consumer_queue_names
-        self.producer_queue_names = producer_queue_names
+        self.producer_queue_name = producer_queue_name
         self.exchange_name_consumer = exchange_name_consumer
         self.exchange_name_producer = exchange_name_producer
         self.exchange_type_consumer = exchange_type_consumer
@@ -36,7 +52,7 @@ class Worker:
         signal.signal(signal.SIGINT, self._handle_shutdown)
         signal.signal(signal.SIGTERM, self._handle_shutdown)
         
-        logging.info(f"Worker initialized for consumer queues '{consumer_queue_names}', producer queues '{producer_queue_names}', exchange consumer '{exchange_name_consumer}' and exchange producer '{exchange_name_producer}'")
+        logging.info(f"Worker initialized for consumer queues '{consumer_queue_names}', producer queue '{producer_queue_name}', exchange consumer '{exchange_name_consumer}' and exchange producer '{exchange_name_producer}'")
     
     async def run(self):
         """Run the worker, connecting to RabbitMQ and consuming messages"""
@@ -48,7 +64,6 @@ class Worker:
         logging.info(f"Worker running and consuming from queue '{self.consumer_queue_names}'")
         
         # Keep the worker running until shutdown is triggered
-        # TODO check this later
         while self._running:
             await asyncio.sleep(1)
             
@@ -60,12 +75,11 @@ class Worker:
         connected = await self.rabbitmq.connect()
         if not connected:
             logging.error(f"Failed to connect to RabbitMQ, retrying in {retry_count} seconds...")
-            await asyncio.sleep(2 ** retry_count)
+            wait_time = min(30, 2 ** retry_count)
+            await asyncio.sleep(wait_time)
             return await self._setup_rabbitmq(retry_count + 1)
         
         # -------------------- CONSUMER --------------------
-
-        # In this worker there is no exchange consumer
         # Declare queues (idempotent operation)
         for queue_name in self.consumer_queue_names:
             queue = await self.rabbitmq.declare_queue(queue_name, durable=True)
@@ -75,7 +89,6 @@ class Worker:
 
 
         # -------------------- PRODUCER --------------------
-
         # Declare exchange (idempotent operation)
         exchange = await self.rabbitmq.declare_exchange(
             name=self.exchange_name_producer,
@@ -86,23 +99,22 @@ class Worker:
             logging.error(f"Failed to declare exchange '{self.exchange_name_producer}'")
             return False
         
-        # Declare queues (idempotent operation)
-        for queue_name in self.producer_queue_names:
-            queue = await self.rabbitmq.declare_queue(queue_name, durable=True)
-            if not queue:
-                return False        
-            # Bind queues to exchange
-            success = await self.rabbitmq.bind_queue(
-                queue_name=queue_name,
-                exchange_name=self.exchange_name_producer,
-                routing_key=queue_name
-            )
-            if not success:
-                logging.error(f"Failed to bind queue '{queue_name}' to exchange '{self.exchange_name_producer}'")
-                return False
+        # Declare the producer queue (router input queue)
+        queue = await self.rabbitmq.declare_queue(self.producer_queue_name, durable=True)
+        if not queue:
+            return False        
+        
+        # Bind queue to exchange
+        success = await self.rabbitmq.bind_queue(
+            queue_name=self.producer_queue_name,
+            exchange_name=self.exchange_name_producer,
+            routing_key=self.producer_queue_name
+        )
+        if not success:
+            logging.error(f"Failed to bind queue '{self.producer_queue_name}' to exchange '{self.exchange_name_producer}'")
+            return False
         # --------------------------------------------------
         
-
         # Set up consumers
         for queue_name in self.consumer_queue_names:
             success = await self.rabbitmq.consume(
@@ -125,13 +137,13 @@ class Worker:
             client_id = deserialized_message.get("clientId")
             data = deserialized_message.get("data")
             
-            # Process the movie data - preview first item
+            # Process the movie data
             if data:
                 data_eq_year, data_gt_year = self._filter_data(data)
                 if data_eq_year:
-                    await self.send_eq_year(client_id, data_eq_year)
+                    await self.send_data(client_id, data_eq_year, QUERY_EQ_YEAR)
                 if data_gt_year:
-                    await self.send_gt_year(client_id, data_gt_year)
+                    await self.send_data(client_id, data_gt_year, QUERY_GT_YEAR)
             
             # Acknowledge message
             await message.ack()
@@ -141,28 +153,26 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_eq_year(self, client_id, data):
-        """Send data to the eq_year queue in our exchange"""
-        message = self._addMetaData(client_id, data)
-        await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
-            routing_key=EQ_YEAR_QUEUE_NAME,
+    async def send_data(self, client_id, data, query_type):
+        """Send data to the router queue with query type in metadata"""
+        message = self._add_metadata(client_id, data, query_type)
+        success = await self.rabbitmq.publish(
+            exchange_name=self.exchange_name_producer,
+            routing_key=self.producer_queue_name,
             message=Serializer.serialize(message),
             persistent=True
         )
+        if success:
+            logging.info(f"Sent {len(data)} records with query type '{query_type}' to router queue")
+        else:
+            logging.error(f"Failed to send data with query type '{query_type}' to router queue")
 
-    async def send_gt_year(self, client_id, data):
-        """Send data to the gt_year queue in our exchange"""
-        message = self._addMetaData(client_id, data)
-        await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
-            routing_key=GT_YEAR_QUEUE_NAME,
-            message=Serializer.serialize(message),
-            persistent=True
-        )
-
-    def _addMetaData(self,client_id, data):
+    def _add_metadata(self, client_id, data, query_type):
+        """Add metadata including query type to the message"""
         message = {        
-        "clientId": client_id,
-        "data": data
+            "clientId": client_id,
+            "data": data,
+            "query": query_type
         }
         return message
 
