@@ -19,7 +19,9 @@ class Client:
         self.config = Config()
         self.receiver_running = False
         self.receiver_thread = None
-        self.output_file = f"output/output_records_client_{self.name}.json"
+        self.output_file_q1 = f"output/output_records_client_{self.name}_Q1.json"
+        self.output_file_q5 = f"output/output_records_client_{self.name}_Q5.json"
+
 
     def __str__(self):
         return f"Client(name={self.name}, age={self.age})"
@@ -123,42 +125,60 @@ class Client:
         self.receiver_thread = threading.Thread(target=self._receive_loop)
         self.receiver_thread.daemon = True
         self.receiver_thread.start()
-        logging.info(f"Receiver thread started, logging to {self.output_file}")
+        logging.info(f"Receiver thread started, logging to multiple files")
         return self.receiver_thread
     
     def _receive_loop(self):
-        """Continuously receive messages and log them to a file"""
+        """Continuously receive messages and log them to a file based on query type"""
         try:
             while self.receiver_running and self.skt:
                 try:
-                    response_data = self.protocol.recv_response(self.skt)
-                    logging.info(f"Received data: {response_data[:10]}...")
+                    # Now we get query_type and response_data
+                    query_type, response_data = self.protocol.recv_response(self.skt)
+                    logging.info(f"Received data for Query {query_type}: {response_data[:10]}...")
+                    
                     try:
-
                         parsed_data = json.loads(response_data)
                         processed_movies = []
                         
-                        for movie in parsed_data:
-                            # Format genres as a comma-separated list
-                            genres_str = ", ".join(movie.get("Genres", [])) or "No genres"
-                            
-                            # Create a clean record with just the data we want to log
-                            movie_record = {
-                                "title": movie.get("Movie", "Unknown"),
-                                "genres": genres_str,
-                                "year": movie.get("Year", "Unknown"),
-                                "rating": movie.get("Rating", "Unknown")
-                            }
-                            processed_movies.append(movie_record)
-                        # Log to file with processed data instead of raw data
+                        # Select output file based on query type
+                        output_file = self.output_file_q1 if query_type == "1" else self.output_file_q5
+                        
+                        # Process movies based on query type
+                        if query_type == "1":
+                            # Process Q1 data (existing logic)
+                            for movie in parsed_data:
+                                genres_str = ", ".join(movie.get("Genres", [])) or "No genres"
+                                
+                                movie_record = {
+                                    "title": movie.get("Movie", "Unknown"),
+                                    "genres": genres_str,
+                                    "year": movie.get("Year", "Unknown"),
+                                    "rating": movie.get("Rating", "Unknown")
+                                }
+                                processed_movies.append(movie_record)
+                        else:
+                            # Process Q5 data
+                            for movie in parsed_data:
+                                movie_record = {
+                                    "title": movie.get("Movie", "Unknown"),
+                                    "sentiment": movie.get("feeling", "Unknown"),
+                                    "revenue_budget_ratio": movie.get("Average", 0)
+                                }
+                                processed_movies.append(movie_record)
+                        
                         # Ensure directory exists before writing to file
-                        os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
-                        with open(self.output_file, 'a') as f:
+                        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+                        with open(output_file, 'a') as f:
                             for movie in processed_movies:
                                 f.write(json.dumps(movie) + "\n")
+                                
+                        logging.info(f"Wrote {len(processed_movies)} records to {output_file}")
+                    
                     except json.JSONDecodeError as e:
                         logging.error(f"Failed to parse response as JSON: {e}")
                         logging.info(f"Raw response: {response_data[:100]}...")
+                
                 except socket.timeout:
                     # Just continue if we get a timeout
                     continue

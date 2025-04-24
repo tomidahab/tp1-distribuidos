@@ -62,16 +62,24 @@ class Protocol:
         except Exception as e:
             raise Exception(f"Error sending data in protocol _send_all(): {e}")
 
-
     def recv_response(self, skt):
         """
         Receive a response from the socket
-        First read 4 bytes to get the length, then read the actual data
+        First read 4 bytes to get the length, then read the query type byte,
+        then read the actual data
         """
         length_bytes = self.recv_exact(skt, 4)
-        length = int.from_bytes(length_bytes, byteorder='big')
-        data_bytes = self.recv_exact(skt, length)
-        return self._decode(data_bytes)
+        total_length = int.from_bytes(length_bytes, byteorder='big')
+        
+        # Read query type byte
+        query_byte = self.recv_exact(skt, 1)
+        query_type = query_byte.decode('utf-8')
+        
+        # Read data (length - 1 because we already read the query type byte)
+        data_bytes = self.recv_exact(skt, total_length - 1)
+        data = self._decode(data_bytes)
+    
+        return query_type, data
     
     def _decode(self, data_bytes: bytes):
         """
