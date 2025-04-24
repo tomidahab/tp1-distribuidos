@@ -3,18 +3,30 @@ import logging
 import signal
 import socket
 import uuid
+import os
 from Protocol import Protocol
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 import csv
 from io import StringIO
 from common.Serializer import Serializer
 import json
+from dotenv import load_dotenv
 
-#TODO move this to a common config file or common env var since worker has this too
-BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
+# Load environment variables
+load_dotenv()
+
+# Router queue names from environment variables
+MOVIES_ROUTER_QUEUE = os.getenv("MOVIES_ROUTER_QUEUE")
+CREDITS_ROUTER_QUEUE = os.getenv("CREDITS_ROUTER_QUEUE")
+RATINGS_ROUTER_QUEUE = os.getenv("RATINGS_ROUTER_QUEUE")
+
 COLUMNS = {'genres': 3, 'imdb_id':6, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
 EOF_MARKER = "EOF_MARKER"
-RESPONSE_QUEUE = "response_queue"
+RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
+MAX_CSVS = 3
+MOVIES_CSV = 0
+CREDITS_CSV = 1
+RATINGS_CSV = 2
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,7 +35,7 @@ logging.basicConfig(
 )
 
 class Boundary:
-  def __init__(self, port=5000, listen_backlog=100):
+  def __init__(self, port=5000, listen_backlog=100, movies_router_queue=MOVIES_ROUTER_QUEUE, credits_router_queue=CREDITS_ROUTER_QUEUE, ratings_router_queue=RATINGS_ROUTER_QUEUE):
     self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     self._server_socket.bind(("", port))
     self._server_socket.listen(listen_backlog)
@@ -35,12 +47,17 @@ class Boundary:
     
     # Create RabbitMQ client instance
     self.rabbitmq = RabbitMQClient()  # Using default parameters
-    self._queue_name = BOUNDARY_QUEUE_NAME
+    
+    # Router queues for different CSV types
+    self.movies_router_queue = movies_router_queue
+    self.credits_router_queue = credits_router_queue
+    self.ratings_router_queue = ratings_router_queue
 
     signal.signal(signal.SIGINT, self._handle_shutdown)
     signal.signal(signal.SIGTERM, self._handle_shutdown)
 
     logging.info(self.green(f"Boundary ID: {self.id} successfully created"))
+    logging.info(f"Using router queues: Movies={self.movies_router_queue}, Credits={self.credits_router_queue}, Ratings={self.ratings_router_queue}")
 
   # TODO: Move to printer class
   def green(self, text): return f"\033[92m{text}\033[0m"
@@ -178,33 +195,43 @@ class Boundary:
     loop = asyncio.get_running_loop()
     proto = self.protocol(loop)
     logging.info(self.green(f"Client ID: {client_id} successfully started"))
+    csvs_received = 0
     try:
         data = ''
-        while True:
+        while csvs_received < MAX_CSVS:
             try:
                 data = await self._receive_csv_batch(sock, proto)
                 if data == EOF_MARKER:
-                    logging.info(f"EOF received from client {addr[0]}:{addr[1]}")
+                    csvs_received += 1
+                    logging.info(f"EOF received for CSV #{csvs_received} from client {addr[0]}:{addr[1]}")
+                    # continue
                     break
-                filtered_data = self.project_to_columns(data)
-                prepared_data = self._addMetaData(filtered_data, client_id)
-                await self._send_data_to_rabbitmq_queue(prepared_data)
+                
+                # Process and route data based on CSV type
+                if csvs_received == MOVIES_CSV: 
+                    # Process and send to movies router
+                    filtered_data = self.project_to_columns(data)
+                    prepared_data = self._addMetaData(filtered_data, client_id)
+                    await self._send_data_to_rabbitmq_queue(prepared_data, self.movies_router_queue)
+                
+                elif csvs_received == CREDITS_CSV:
+                    # Process and send to credits router
+                    # For now, just forward the raw data - you can add specific processing later
+                    prepared_data = self._addMetaData(data, client_id)
+                    await self._send_data_to_rabbitmq_queue(prepared_data, self.credits_router_queue)
+                
+                elif csvs_received == RATINGS_CSV:
+                    # Process and send to ratings router
+                    # For now, just forward the raw data - you can add specific processing later
+                    prepared_data = self._addMetaData(data, client_id)
+                    await self._send_data_to_rabbitmq_queue(prepared_data, self.ratings_router_queue)
+                
             except ConnectionError:
                 logging.info(f"Client {addr[0]}:{addr[1]} disconnected")
                 break
-                
+               
     except Exception as exc:
         logging.error(f"Client {addr[0]}:{addr[1]} error: {exc}")
-        
-    # finally:
-    #     try:
-    #         sock.shutdown(socket.SHUT_RDWR)
-    #     except OSError:
-    #         pass # Socket might already be closed
-    #     sock.close()
-    #     if sock in self._client_sockets:
-    #         self._client_sockets.remove(sock)
-    #     logging.info("Connection gracefully closed %s:%d", *addr)
 
   def project_to_columns(self, data):
     """
@@ -231,8 +258,6 @@ class Boundary:
     return result
   
   def _addMetaData(self, data, client_id):
-    # Yeah this is basically a one line function, but its a function bc if in the future
-    # the logic of adding meta data gets more complex is all encapsulated here.
     message = {        
       "clientId": client_id,
       "data": data
@@ -265,31 +290,36 @@ class Boundary:
         await asyncio.sleep(wait_time)
         return await self._setup_rabbitmq(retry_count + 1)
     
-    await self.rabbitmq.declare_queue(self._queue_name, durable=True)
+    # Declare all necessary queues
+    await self.rabbitmq.declare_queue(self.movies_router_queue, durable=True)
+    await self.rabbitmq.declare_queue(self.credits_router_queue, durable=True)
+    await self.rabbitmq.declare_queue(self.ratings_router_queue, durable=True)
     await self.rabbitmq.declare_queue(RESPONSE_QUEUE, durable=True)
     
-
+    logging.info("All router queues declared successfully")
   
-  async def _send_data_to_rabbitmq_queue(self, data):
+  async def _send_data_to_rabbitmq_queue(self, data, queue_name):
     """
     Send the data to RabbitMQ queue after serializing it
+    
+    Args:
+        data: The data to send
+        queue_name: The queue to send to
     """
     try:
         # Serialize the data to binary
         serialized_data = Serializer.serialize(data)
         
         success = await self.rabbitmq.publish_to_queue(
-            queue_name=self._queue_name,
+            queue_name=queue_name,
             message=serialized_data,
             persistent=True
         )
         
-        if success:
-            logging.info(f"Data published to RabbitMQ queue ({len(data)} rows)")
-        else:
-            logging.error(f"Failed to publish data to RabbitMQ")
+        if not success:
+            logging.error(f"Failed to publish data to {queue_name}")
     except Exception as e:
-        logging.error(f"Error publishing to queue '{self._queue_name}': {e}")
+        logging.error(f"Error publishing data to queue '{queue_name}': {e}")
          
 # ------------------------------------------------------------------ #
 # graceful shutdown handler                                          #
