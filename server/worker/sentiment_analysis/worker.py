@@ -22,9 +22,8 @@ class SentimentWorker:
         self.consumer_queue_name = consumer_queue_name
         self.rabbitmq = RabbitMQClient()
         
-        # Initialize sentiment analysis model
         logging.info("Loading sentiment analysis model...")
-        self.sentiment_analyzer = pipeline("sentiment-analysis")
+        self.sentiment_pipeline = pipeline("sentiment-analysis")
         logging.info("Sentiment analysis model loaded")
         
         # Set up signal handlers for graceful shutdown
@@ -97,7 +96,7 @@ class SentimentWorker:
                 # Prepare response message
                 response_message = {
                     "clientId": client_id,
-                    "query": "Q5",  # Add a query identifier
+                    "query": "Q5",
                     "data": processed_data
                 }
                 
@@ -121,30 +120,20 @@ class SentimentWorker:
             
         except Exception as e:
             logging.error(f"Error processing message: {e}")
-            # Reject the message but don't requeue it to avoid endless cycle
             await message.reject(requeue=False)
 
     async def _analyze_sentiment_and_calculate_ratios(self, data):
-        """
-        Analyze the sentiment of movie overviews and calculate revenue/budget ratios.
-        Returns a list of processed movies with sentiment and ratio information.
-        Process movies in smaller batches to prevent memory issues.
-        """
         processed_movies = []
         positive_count = 0
         negative_count = 0
         
-        # Process in smaller batches of 10 movies at a time
+        # Process one movie at a time
         batch_size = 1
         total_movies = len(data)
         
         for i in range(0, total_movies, batch_size):
-            # Get current batch
-            end_idx = min(i + batch_size, total_movies)
-            current_batch = data[i:end_idx]
-            logging.info(f"Processing batch {i//batch_size + 1}/{(total_movies + batch_size - 1)//batch_size} ({len(current_batch)} movies)")
+            current_batch = data[i:i+batch_size]
             
-            # Process this batch
             for movie in current_batch:
                 try:
                     # Extract required fields
@@ -156,81 +145,55 @@ class SentimentWorker:
                     # Calculate ratio
                     ratio = revenue / budget if budget > 0 else 0
                     
-                    # Truncate very long overviews to avoid excessive memory usage
-                    if len(overview) > 500:
-                        overview = overview[:500]
-                    
-                    # Analyze sentiment of overview
-                    # We'll do this asynchronously to not block the event loop
-                    result = await asyncio.to_thread(self._get_sentiment, overview)
-                    sentiment_label = result['label']
-                    confidence = result['score']
-                    
-                    # Increment counters
-                    if sentiment_label == 'POSITIVE':
-                        positive_count += 1
-                    else:
-                        negative_count += 1 
+                    sentiment = await asyncio.to_thread(self.analyze_sentiment, overview)
                     
                     # Create processed movie record
                     processed_movie = {
                         "Movie": original_title,
-                        "feeling": "positive" if sentiment_label == 'POSITIVE' else "negative",
+                        "feeling": sentiment,
                         "Average": ratio,
-                        "confidence": confidence
+                        "confidence": 0.8 
                     }
                     
                     processed_movies.append(processed_movie)
+                    
+                    # Update counters
+                    if sentiment == "positive":
+                        positive_count += 1
+                    else:
+                        negative_count += 1
                     
                 except Exception as e:
                     logging.error(f"Error processing movie {movie.get('original_title', 'Unknown')}: {e}")
                     continue
             
-            # Add a small delay between batches to prevent memory pressure
-            #TODO REMOVE later
             await asyncio.sleep(0.1)
-    
+        
         logging.info(f"Processed a total of {len(processed_movies)} movies: {positive_count} positive, {negative_count} negative")
         return processed_movies
     
-    def _get_sentiment(self, text):
-        """
-        Get sentiment of text using the Hugging Face transformers pipeline.
-        This is a synchronous operation that will be run in a separate thread.
-        With added memory management.
-        """
+    def analyze_sentiment(self, text: str) -> str:
+        if not text or not text.strip():
+            logging.debug("Received empty or whitespace-only text for sentiment analysis.")
+            return "neutral"
+        
         try:
-            # If text is empty or too short, default to neutral sentiment
-            if not text or len(text) < 10:
-                return {"label": "NEUTRAL", "score": 0.5}
+            result = self.sentiment_pipeline(text, truncation=True)[0]
+            label = result["label"].lower()
             
-            # Still truncate very long texts, but not as aggressively
-            if len(text) > 1000:
-                text = text[:1000]
-            
-            # Force garbage collection before analysis
-            import gc
-            gc.collect()
-                    
-            # Get sentiment from model
-            result = self.sentiment_analyzer(text)[0]
-            
-            # Force garbage collection after analysis
-            gc.collect()
-            
-            return result
+            if label in {"positive", "negative"}:
+                logging.debug(f"Sentiment analysis result: {label} for text: {text[:50]}...")
+                return label
+            else:
+                logging.debug(f"Unexpected sentiment label '{label}' for text: {text[:50]}...")
+                return "neutral"
                 
         except Exception as e:
-            logging.error(f"Error analyzing sentiment: {e}")
-            # Return neutral sentiment as fallback
-            return {"label": "NEUTRAL", "score": 0.5}
-        
+            logging.error(f"Error during sentiment analysis: {e}")
+            return "neutral"
+    
     def _handle_shutdown(self, *_):
-        """Handle shutdown signals"""
         logging.info(f"Shutting down sentiment analysis worker...")
         self._running = False
-        
-        # Close RabbitMQ connection - note we need to create a task
-        # since this is called from a signal handler
         if hasattr(self, 'rabbitmq'):
             asyncio.create_task(self.rabbitmq.close())
