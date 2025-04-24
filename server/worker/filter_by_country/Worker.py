@@ -32,11 +32,11 @@ RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_by_country_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
 
-WORKER_QUEUE = os.getenv("WORKER_QUEUE", "filter_by_country_worker")
+ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE")
 
 class Worker:
     def __init__(self, 
-                 consumer_queue_name=WORKER_QUEUE, 
+                 consumer_queue_name=ROUTER_CONSUME_QUEUE, 
                  exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
                  exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
                  producer_queue_names=[EQ_ONE_COUNTRY_QUEUE_NAME, RESPONSE_QUEUE]):

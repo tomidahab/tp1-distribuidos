@@ -17,7 +17,7 @@ async def main():
     load_dotenv()
     
     # Get configuration from environment variables
-    consumer_queue = os.getenv("WORKER_QUEUE", "filter_by_country_worker")
+    consumer_queue = os.getenv("ROUTER_CONSUME_QUEUE")
     eq_one_country_queue = os.getenv("EQ_ONE_COUNTRY_QUEUE", "eq_one_country")
     response_queue = os.getenv("RESPONSE_QUEUE", "response_queue")
     producer_exchange = os.getenv("PRODUCER_EXCHANGE", "filtered_by_country_exchange")
