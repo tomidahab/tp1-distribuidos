@@ -261,7 +261,8 @@ class Boundary:
     connected = await self.rabbitmq.connect()
     if not connected:
         logging.error(f"Failed to connect to RabbitMQ, retrying in {retry_count} seconds...")
-        await asyncio.sleep(2 ** retry_count)
+        wait_time = min(30, 2 ** retry_count)
+        await asyncio.sleep(wait_time)
         return await self._setup_rabbitmq(retry_count + 1)
     
     await self.rabbitmq.declare_queue(self._queue_name, durable=True)
