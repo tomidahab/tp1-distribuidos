@@ -26,8 +26,11 @@ ISO_3166_1 = "iso_3166_1"
 NAME = "name"
 EOF_MARKER = "EOF_MARKER"
 RESPONSE_QUEUE = "top_5_budget_queue"
-
-
+TITLE = "title"
+OVERVIEW ="overview"
+SPOKEN_LANGUAGES = "spoken_languages"
+REVENUE = "revenue"
+ID = "id"
 
 class Worker:
     def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[BOUNDARY_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[RESPONSE_QUEUE]):
@@ -176,10 +179,47 @@ class Worker:
             imdb_id = (record.pop(IMBD_ID, None))
             original_title = (record.pop(ORIGINAL_TITLE, None))
             release_date = (record.pop(RELEASE_DATE, None))
+            title = (record.pop(TITLE, None))
+            overview = (record.pop(OVERVIEW, None))
+            spoken_languages = (record.pop(SPOKEN_LANGUAGES, None))
+            revenue = (record.pop(REVENUE, None))
+            id = (record.pop(ID, None))
 
-            if genres is None or imdb_id is None or original_title is None or release_date is None:
-                logging.error(f"Record missing some field")
+            if imdb_id is None:
+                logging.error(f"Record missing '{IMBD_ID}' field: {imdb_id}")
                 continue
+
+            if genres is None:
+                logging.error(f"Record missing '{GENRES}' field: {genres}")
+                continue
+
+            if original_title is None:
+                logging.error(f"Record missing '{ORIGINAL_TITLE}' field: {original_title}")
+                continue
+
+            if release_date is None:
+                logging.error(f"Record missing '{RELEASE_DATE}' field: {release_date}")
+                continue
+
+            if title is None or title == "":
+                logging.error(f"Record missing '{TITLE}' field: {title}")
+                continue
+
+            if overview is None or overview == "":
+                logging.error(f"Record missing '{OVERVIEW}' field: {overview}")
+                continue
+
+            if revenue is None:
+                logging.error(f"Record missing '{REVENUE}' field: {revenue}")
+                continue
+
+            if spoken_languages is None:
+                logging.error(f"Record missing '{SPOKEN_LANGUAGES}' field: {spoken_languages}")
+                continue
+
+#            if id is None:
+#               logging.error(f"Record missing '{ID}' field: {id}")
+#              continue
 
             if countries is None:
                 logging.error(f"Record missing '{PRODUCTION_COUNTRIES}' field: {record}")

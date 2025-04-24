@@ -11,7 +11,7 @@ from common.Serializer import Serializer
 
 #TODO move this to a common config file or common env var since worker has this too
 BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
-COLUMNS = {'budget':2,'genres': 3, 'imdb_id':6, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
+COLUMNS = {'budget':2,'genres': 3, 'imdb_id':6, 'original_title': 8, 'overview': 9, 'production_countries': 13, 'release_date': 14, 'revenue': 15, 'spoken_languages': 17, 'title': 20}
 EOF_MARKER = "EOF_MARKER"
 RESPONSE_QUEUE = "response_queue"
 BUDGET_QUEUE = "countries_budget_workers"
