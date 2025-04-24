@@ -155,12 +155,16 @@ class RabbitMQClient:
             logging.error(f"Failed to publish to exchange '{exchange_name}': {e}")
             return False
     
-    async def consume(self, queue_name: str, callback, no_ack=False):
+    async def consume(self, queue_name: str, callback, no_ack=False, prefetch_count=None):
         """Set up consumer for a queue"""
         try:
             if not self._channel:
                 if not await self.connect():
                     return False
+                    
+            # Set prefetch count if provided
+            if prefetch_count is not None:
+                await self._channel.set_qos(prefetch_count=prefetch_count)
                     
             if queue_name not in self._queues:
                 queue = await self.declare_queue(queue_name)
@@ -174,7 +178,10 @@ class RabbitMQClient:
                 no_ack=no_ack
             )
             
-            logging.info(f"Consumer set up for queue '{queue_name}'")
+            if prefetch_count is not None:
+                logging.info(f"Consumer set up for queue '{queue_name}' with prefetch_count={prefetch_count}")
+            else:
+                logging.info(f"Consumer set up for queue '{queue_name}'")
             return True
         except Exception as e:
             logging.error(f"Failed to set up consumer for queue '{queue_name}': {e}")

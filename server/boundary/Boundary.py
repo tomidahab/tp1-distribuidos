@@ -12,7 +12,9 @@ import json
 
 #TODO move this to a common config file or common env var since worker has this too
 BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
+BOUNDARY_QUEUE_Q5_NAME = "sentiment_analysis_workers"
 COLUMNS = {'genres': 3, 'imdb_id':6, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
+COLUMNS_Q5 = {'budget': 2, 'imdb_id':6, 'original_title': 8, 'overview': 9, 'revenue': 15}
 EOF_MARKER = "EOF_MARKER"
 RESPONSE_QUEUE = "response_queue"
 
@@ -83,8 +85,6 @@ class Boundary:
     This method blocks waiting for messages without consuming CPU.
     """
     try:
-        logging.info(self.green(f"Client_socket: {self._client_sockets}"))
-        
         # Set up consumer - this blocks waiting for messages
         await self.rabbitmq.consume(
             queue_name=RESPONSE_QUEUE,
@@ -94,83 +94,94 @@ class Boundary:
         
         logging.info(self.green(f"Started consuming from {RESPONSE_QUEUE}"))
         
-        # Keep this task alive while the service is running
+        # Keep this task alive whileSent 65 registers for Q5 the service is running
         while self._running:
             await asyncio.sleep(1)
             
     except Exception as e:
         logging.error(f"Error in response queue handler: {e}")
 
+# TODO PLEASE RE FACTOR THIS INTO SMALLER FN
   async def _process_response_message(self, message):
-    """Process messages from the response queue"""
-    try:
-        # Deserialize the message
-        deserialized_message = Serializer.deserialize(message.body)
-        
-        # Extract clientId and data from the deserialized message
-        client_id = deserialized_message.get("clientId")
-        data = deserialized_message.get("data")
-        
-        if not data:
-            logging.warning(f"Response message contains no data")
-            await message.ack()
-            return
-        
-        # Convert data to list if it's not already
-        if not isinstance(data, list):
-            data = [data]
-        
-        # Find the client socket by client_id
-        client_socket = None
-        for client_dict in self._client_sockets:
-            if client_id in client_dict:
-                client_socket = client_dict[client_id]
-                break
-        
-        # Send the data to the client if the socket is found
-        if client_socket:
-            try:
-                # Prepare data for sending
-                proto = self.protocol(asyncio.get_running_loop())
-                
-                # Transform the data into a more user-friendly format
-                formatted_data = []
-                for movie in data:
-                    # Parse the genres string into a list of genre names
-                    genres_list = []
-                    try:
-                        # The genres are stored as a string representation of a list of dicts
-                        genres_data = json.loads(movie.get('genres', '[]').replace("'", '"'))
-                        genres_list = [genre.get('name') for genre in genres_data if genre.get('name')]
-                    except (json.JSONDecodeError, AttributeError, TypeError):
-                        # If we can't parse the genres, use an empty list
-                        pass
-                    
-                    # Create a formatted movie entry - without IMDb ID
-                    formatted_movie = {
-                        "Movie": movie.get('original_title', 'Unknown'),
-                        "Genres": genres_list
-                    }
-                    formatted_data.append(formatted_movie)
-                
-                # Serialize the transformed data
-                serialized_data = json.dumps(formatted_data)
-                await proto.send_all(client_socket, serialized_data)
-                
-                logging.info(self.green(f"Sent {len(data)} records back to client {client_id}"))
-            except Exception as e:
-                logging.error(f"Failed to send data to client {client_id}: {e}")
-        else:
-            logging.warning(f"Client socket not found for client ID: {client_id}")
-        
-        # Acknowledge message
-        await message.ack()
-        
-    except Exception as e:
-        logging.error(f"Error processing response message: {e}")
-        # Reject message but don't requeue
-        await message.reject(requeue=False)
-
+      """Process messages from the response queue"""
+      try:
+          # Deserialize the message
+          deserialized_message = Serializer.deserialize(message.body)
+          
+          # Extract clientId, query and data from the deserialized message
+          client_id = deserialized_message.get("clientId")
+          query = deserialized_message.get("query", "Q1")  # Default to Q1 if not specified
+          data = deserialized_message.get("data")
+          
+          if not data:
+              logging.warning(f"Response message contains no data")
+              await message.ack()
+              return
+          
+          # Convert data to list if it's not already
+          if not isinstance(data, list):
+              data = [data]
+          
+          # Find the client socket by client_id
+          client_socket = None
+          for client_dict in self._client_sockets:
+              if client_id in client_dict:
+                  client_socket = client_dict[client_id]
+                  break
+          
+          # Send the data to the client if the socket is found
+          if client_socket:
+              try:
+                  # Prepare data for sending
+                  proto = self.protocol(asyncio.get_running_loop())
+                  
+                  # Determine query type (1 for Q1, 5 for Q5)
+                  query_type = "5" if query == "Q5" else "1"
+                  
+                  if query == "Q5":
+                      # Show a preview of the data (first 3 items or fewer)
+                      data_preview = data[:3] if len(data) > 3 else data
+                      logging.info(f"SENDING QUERY 5 RESPONSE - Preview of first {len(data_preview)} items: {json.dumps(data_preview)[:200]}...")
+                      serialized_data = json.dumps(data)
+                  else:
+                      # For Q1 and others, format the data as before
+                      formatted_data = []
+                      for movie in data:
+                          # Parse the genres string into a list of genre names
+                          genres_list = []
+                          try:
+                              # The genres are stored as a string representation of a list of dicts
+                              genres_data = json.loads(movie.get('genres', '[]').replace("'", '"'))
+                              genres_list = [genre.get('name') for genre in genres_data if genre.get('name')]
+                          except (json.JSONDecodeError, AttributeError, TypeError):
+                              # If we can't parse the genres, use an empty list
+                              pass
+                          
+                          # Create a formatted movie entry - without IMDb ID
+                          formatted_movie = {
+                              "Movie": movie.get('original_title', 'Unknown'),
+                              "Genres": genres_list
+                          }
+                          formatted_data.append(formatted_movie)
+                      
+                      serialized_data = json.dumps(formatted_data)
+                  
+                  # Send with query type
+                  await proto.send_all(client_socket, serialized_data, query_type)
+                  
+                  logging.info(self.green(f"Sent {len(data)} records for query {query} back to client {client_id}"))
+              except Exception as e:
+                  logging.error(f"Failed to send data to client {client_id}: {e}")
+          else:
+              logging.warning(f"Client socket not found for client ID: {client_id}")
+          
+          # Acknowledge message
+          await message.ack()
+          
+      except Exception as e:
+          logging.error(f"Error processing response message: {e}")
+          # Reject message but don't requeue
+          await message.reject(requeue=False)
 # ------------------------------------------------------------------ #
 # per‑client logic                                                   #
 # ------------------------------------------------------------------ #
@@ -186,9 +197,16 @@ class Boundary:
                 if data == EOF_MARKER:
                     logging.info(f"EOF received from client {addr[0]}:{addr[1]}")
                     break
-                filtered_data = self.project_to_columns(data)
-                prepared_data = self._addMetaData(filtered_data, client_id)
-                await self._send_data_to_rabbitmq_queue(prepared_data)
+                
+                filtered_data_Q1, filtered_data_Q5 = self.project_to_columns(data)
+                
+                prepared_data_Q1 = self._addMetaData(filtered_data_Q1, client_id)
+                await self._send_data_to_rabbitmq_queue(prepared_data_Q1)
+
+                if filtered_data_Q5:  # Since im filtering budget and revenue = 0 movies maybe there are no movies if data is broken
+                  prepared_data_Q5 = self._addMetaData(filtered_data_Q5, client_id)
+                  await self._send_data_to_rabbitmq_queue(prepared_data_Q5, queue_name=BOUNDARY_QUEUE_Q5_NAME)
+              
             except ConnectionError:
                 logging.info(f"Client {addr[0]}:{addr[1]} disconnected")
                 break
@@ -217,18 +235,49 @@ class Boundary:
     input_file = StringIO(data)
     csv_reader = csv.reader(input_file)
     
-    result = []
+    result_Q1 = []
+    result_Q5 = []
     
     for row in csv_reader:
-        if not row or len(row) <= max(COLUMNS.values()):
+        # Skip empty rows or rows that don't have enough columns
+        if not row:
             continue
             
-        # Create a dictionary for this row with column names as keys
-        row_dict = {col_name: row[col_idx] for col_name, col_idx in COLUMNS.items()}
-        result.append(row_dict)
+        # Check if row has enough columns for regular processing
+        if len(row) > max(COLUMNS.values()):
+            # Create a dictionary for this row with column names as keys
+            row_dict = {col_name: row[col_idx] for col_name, col_idx in COLUMNS.items()}
+            result_Q1.append(row_dict)
+        
+        # Check if row has enough columns for Q5 processing
+        if len(row) > max(COLUMNS_Q5.values()):
+            # Create a dictionary for Q5 with required columns
+            row_dict_q5 = {col_name: row[col_idx] for col_name, col_idx in COLUMNS_Q5.items()}
+            
+            # Check if any field is empty, null or nan
+            if any(not row_dict_q5.get(field, '') for field in COLUMNS_Q5.keys()):
+                continue  # Skip this row if any field is empty
+            
+            # Check if budget or revenue is 0 or not a valid number
+            try:
+                budget = float(row_dict_q5.get('budget', '0'))
+                revenue = float(row_dict_q5.get('revenue', '0'))
+                
+                # Skip rows where budget or revenue is 0
+                if budget <= 0 or revenue <= 0:
+                    continue
+                    
+                # Store the numeric values back in the dictionary
+                row_dict_q5['budget'] = budget
+                row_dict_q5['revenue'] = revenue
+                
+                # Only append if all checks pass
+                result_Q5.append(row_dict_q5)
+            except ValueError:
+                # Skip if budget or revenue is not a valid number
+                continue
     
-    logging.info(f"Processed {len(result)} rows into dictionary format")
-    return result
+    return result_Q1, result_Q5
   
   def _addMetaData(self, data, client_id):
     # Yeah this is basically a one line function, but its a function bc if in the future
@@ -265,30 +314,34 @@ class Boundary:
         return await self._setup_rabbitmq(retry_count + 1)
     
     await self.rabbitmq.declare_queue(self._queue_name, durable=True)
+    await self.rabbitmq.declare_queue(BOUNDARY_QUEUE_Q5_NAME, durable=True)
     await self.rabbitmq.declare_queue(RESPONSE_QUEUE, durable=True)
     
 
   
-  async def _send_data_to_rabbitmq_queue(self, data):
+  async def _send_data_to_rabbitmq_queue(self, data, queue_name=None):
     """
     Send the data to RabbitMQ queue after serializing it
     """
+    if queue_name is None:
+        queue_name = self._queue_name
+        
     try:
         # Serialize the data to binary
         serialized_data = Serializer.serialize(data)
         
         success = await self.rabbitmq.publish_to_queue(
-            queue_name=self._queue_name,
+            queue_name=queue_name,
             message=serialized_data,
             persistent=True
         )
         
         if success:
-            logging.info(f"Data published to RabbitMQ queue ({len(data)} rows)")
+            logging.info(f"Data published to RabbitMQ queue '{queue_name}' ({len(data.get('data', []))} rows)")
         else:
-            logging.error(f"Failed to publish data to RabbitMQ")
+            logging.error(f"Failed to publish data to RabbitMQ queue '{queue_name}'")
     except Exception as e:
-        logging.error(f"Error publishing to queue '{self._queue_name}': {e}")
+        logging.error(f"Error publishing to queue '{queue_name}': {e}")
          
 # ------------------------------------------------------------------ #
 # graceful shutdown handler                                          #
