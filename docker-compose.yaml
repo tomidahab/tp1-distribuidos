@@ -18,6 +18,12 @@ services:
     build:
       context: ./server
       dockerfile: boundary/Dockerfile
+    env_file:
+      - ./server/boundary/.env
+    environment:
+      - MOVIES_ROUTER_QUEUE=boundary_movies_router
+      - CREDITS_ROUTER_QUEUE=boundary_credits_router
+      - RATINGS_ROUTER_QUEUE=boundary_ratings_router
     depends_on:
       - rabbitmq
     ports:
@@ -26,19 +32,55 @@ services:
       - ./server/boundary:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
+
+  year_movies_router:
+    build:
+      context: ./server
+      dockerfile: router/Dockerfile
+    env_file:
+      - ./server/router/.env
+    environment:
+      - INPUT_QUEUE=boundary_movies_router
+      - OUTPUT_QUEUES=filter_by_year_worker_1,filter_by_year_worker_2
+      - BALANCER_TYPE=round_robin
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/router:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
       
-  filter_by_year_worker:
+  filter_by_year_worker_1:
     build:
       context: ./server
       dockerfile: worker/filter_by_year/Dockerfile
+    env_file:
+      - ./server/worker/filter_by_year/.env
+    environment:
+      - ROUTER_CONSUME_QUEUE=filter_by_year_worker_1
+      - ROUTER_PRODUCER_QUEUE=year_worker
     depends_on:
       - rabbitmq
     volumes:
       - ./server/worker/filter_by_year:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
-    deploy:
-      replicas: 2
+
+  filter_by_year_worker_2:
+    build:
+      context: ./server
+      dockerfile: worker/filter_by_year/Dockerfile
+    env_file:
+      - ./server/worker/filter_by_year/.env
+    environment:
+      - ROUTER_CONSUME_QUEUE=filter_by_year_worker_2
+      - ROUTER_PRODUCER_QUEUE=year_worker
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/worker/filter_by_year:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
 
   country_router:
     build:
@@ -47,17 +89,16 @@ services:
     env_file:
       - ./server/router/.env
     environment:
-      - INPUT_QUEUE=router_input
+      - INPUT_QUEUE=year_worker
       - OUTPUT_QUEUES=filter_by_country_worker_1,filter_by_country_worker_2
-      - EXCHANGE_NAME=country_filter_exchange
       - BALANCER_TYPE=round_robin
     depends_on:
       - rabbitmq
-      - filter_by_year_worker
     volumes:
       - ./server/router:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
+    
   filter_by_country_worker_1:
     build:
       context: ./server
@@ -65,7 +106,7 @@ services:
     env_file:
       - ./server/worker/filter_by_country/.env
     environment:
-      - WORKER_QUEUE=filter_by_country_worker_1
+      - ROUTER_CONSUME_QUEUE=filter_by_country_worker_1
     depends_on:
       - rabbitmq
       - country_router
@@ -81,7 +122,7 @@ services:
     env_file:
       - ./server/worker/filter_by_country/.env
     environment:
-      - WORKER_QUEUE=filter_by_country_worker_2
+      - ROUTER_CONSUME_QUEUE=filter_by_country_worker_2
     depends_on:
       - rabbitmq
       - country_router
