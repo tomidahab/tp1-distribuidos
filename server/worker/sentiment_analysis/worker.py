@@ -22,9 +22,10 @@ class SentimentWorker:
         self.consumer_queue_name = consumer_queue_name
         self.rabbitmq = RabbitMQClient()
         
-        logging.info("Loading sentiment analysis model...")
+        logging.info("Initializing sentiment analysis model...")
+        # Load the sentiment analysis pipeline from transformers
         self.sentiment_pipeline = pipeline("sentiment-analysis")
-        logging.info("Sentiment analysis model loaded")
+        logging.info("Sentiment analysis model loaded successfully!")
         
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -124,15 +125,28 @@ class SentimentWorker:
 
     async def _analyze_sentiment_and_calculate_ratios(self, data):
         processed_movies = []
-        positive_count = 0
-        negative_count = 0
+        start_time = time.time()
         
         # Process one movie at a time
         batch_size = 1
         total_movies = len(data)
+        log_interval = max(1, min(50, total_movies // 10))  # Logs to see visualize progress
+        
+        logging.info(f"Starting sentiment analysis on {total_movies} movies...")
         
         for i in range(0, total_movies, batch_size):
             current_batch = data[i:i+batch_size]
+            current_movie_num = i + 1
+            
+            # Log progress periodically
+            if current_movie_num % log_interval == 0 or current_movie_num == 1:
+                elapsed = time.time() - start_time
+                progress_pct = (current_movie_num / total_movies) * 100
+                movies_per_sec = current_movie_num / max(elapsed, 0.1)
+                eta = (total_movies - current_movie_num) / max(movies_per_sec, 0.001)
+                
+                logging.info(f"Progress: {current_movie_num}/{total_movies} movies ({progress_pct:.1f}%) - " +
+                            f"Speed: {movies_per_sec:.1f} movies/sec - ETA: {eta:.1f} seconds")
             
             for movie in current_batch:
                 try:
@@ -145,52 +159,55 @@ class SentimentWorker:
                     # Calculate ratio
                     ratio = revenue / budget if budget > 0 else 0
                     
-                    sentiment = await asyncio.to_thread(self.analyze_sentiment, overview)
+                    # Get sentiment - using same approach as our test
+                    sentiment_result = self.analyze_sentiment(overview)
+                    sentiment_label = sentiment_result[0]
+                    confidence = sentiment_result[1]
                     
                     # Create processed movie record
                     processed_movie = {
                         "Movie": original_title,
-                        "feeling": sentiment,
+                        "feeling": sentiment_label,
                         "Average": ratio,
-                        "confidence": 0.8 
+                        "confidence": confidence
                     }
                     
                     processed_movies.append(processed_movie)
-                    
-                    # Update counters
-                    if sentiment == "positive":
-                        positive_count += 1
-                    else:
-                        negative_count += 1
                     
                 except Exception as e:
                     logging.error(f"Error processing movie {movie.get('original_title', 'Unknown')}: {e}")
                     continue
             
-            await asyncio.sleep(0.1)
+            # Sleep a tiny bit to allow other async operations to run
+            await asyncio.sleep(0.01)
         
-        logging.info(f"Processed a total of {len(processed_movies)} movies: {positive_count} positive, {negative_count} negative")
+        total_time = time.time() - start_time
+        avg_time_per_movie = total_time / total_movies if total_movies > 0 else 0
+        
+        logging.info(f"\033[32mCompleted sentiment analysis of {total_movies} movies in {total_time:.2f} seconds - Average: {avg_time_per_movie:.2f} seconds per movie\033[0m")
+        
         return processed_movies
     
-    def analyze_sentiment(self, text: str) -> str:
-        if not text or not text.strip():
-            logging.debug("Received empty or whitespace-only text for sentiment analysis.")
-            return "neutral"
+    def analyze_sentiment(self, text):
+        """
+        Analyze the sentiment of the given text.
+        Returns a tuple of (sentiment_label, confidence_score)
+        """
+        if not text or text.strip() == "":
+            logging.debug("Received empty text for sentiment analysis.")
+            return ("NEUTRAL", 0.5)
         
         try:
-            result = self.sentiment_pipeline(text, truncation=True)[0]
-            label = result["label"].lower()
+            # Use the Hugging Face transformers pipeline directly - exact same approach from our test
+            result = self.sentiment_pipeline(text)[0]
+            label = result['label']  # Will be POSITIVE or NEGATIVE
+            score = result['score']  # Confidence score
             
-            if label in {"positive", "negative"}:
-                logging.debug(f"Sentiment analysis result: {label} for text: {text[:50]}...")
-                return label
-            else:
-                logging.debug(f"Unexpected sentiment label '{label}' for text: {text[:50]}...")
-                return "neutral"
+            return (label, score)
                 
         except Exception as e:
             logging.error(f"Error during sentiment analysis: {e}")
-            return "neutral"
+            return ("NEUTRAL", 0.5)
     
     def _handle_shutdown(self, *_):
         logging.info(f"Shutting down sentiment analysis worker...")
