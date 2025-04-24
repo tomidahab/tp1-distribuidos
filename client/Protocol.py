@@ -52,12 +52,16 @@ class Protocol:
         """
         Helper to send all bytes, handling short writes
         """
-        total_sent = 0
-        while total_sent < len(data):
-            sent = sock.send(data[total_sent:])
-            if sent == 0:
-                raise ConnectionError("Socket connection broken during send")
-            total_sent += sent
+        try:    
+            total_sent = 0
+            while total_sent < len(data):
+                sent = sock.send(data[total_sent:])
+                if sent == 0:
+                    raise ConnectionError("Socket connection broken during send")
+                total_sent += sent
+        except Exception as e:
+            raise Exception(f"Error sending data in protocol _send_all(): {e}")
+
 
     def recv_response(self, skt):
         """

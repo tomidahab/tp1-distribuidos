@@ -61,7 +61,8 @@ class Boundary:
     while self._running:
       try:
         client_sock, addr = await loop.sock_accept(self._server_socket)
-        client_id = uuid.uuid4()
+        client_id = str(uuid.uuid4())  # Convert UUID to string immediately
+        logging.info(self.green(f'client id {client_id}'))
       except asyncio.CancelledError:
         break
       except Exception as exc:
@@ -104,17 +105,63 @@ class Boundary:
     """Process messages from the response queue"""
     try:
         # Deserialize the message
-        data = Serializer.deserialize(message.body)
+        deserialized_message = Serializer.deserialize(message.body)
         
-        # Save complete data to a file in the mounted volume
-        timestamp = int(asyncio.get_event_loop().time())
-        output_file = f"/app/output_records_{timestamp}.json"
+        # Extract clientId and data from the deserialized message
+        client_id = deserialized_message.get("clientId")
+        data = deserialized_message.get("data")
         
-        import json
-        with open(output_file, "w") as f:
-            json.dump(data, f, indent=2)
+        if not data:
+            logging.warning(f"Response message contains no data")
+            await message.ack()
+            return
         
-        logging.info(self.green(f"Saved {len(data)} records to {output_file}"))
+        # Convert data to list if it's not already
+        if not isinstance(data, list):
+            data = [data]
+        
+        # Find the client socket by client_id
+        client_socket = None
+        for client_dict in self._client_sockets:
+            if client_id in client_dict:
+                client_socket = client_dict[client_id]
+                break
+        
+        # Send the data to the client if the socket is found
+        if client_socket:
+            try:
+                # Prepare data for sending
+                proto = self.protocol(asyncio.get_running_loop())
+                
+                # Transform the data into a more user-friendly format
+                formatted_data = []
+                for movie in data:
+                    # Parse the genres string into a list of genre names
+                    genres_list = []
+                    try:
+                        # The genres are stored as a string representation of a list of dicts
+                        genres_data = json.loads(movie.get('genres', '[]').replace("'", '"'))
+                        genres_list = [genre.get('name') for genre in genres_data if genre.get('name')]
+                    except (json.JSONDecodeError, AttributeError, TypeError):
+                        # If we can't parse the genres, use an empty list
+                        pass
+                    
+                    # Create a formatted movie entry - without IMDb ID
+                    formatted_movie = {
+                        "Movie": movie.get('original_title', 'Unknown'),
+                        "Genres": genres_list
+                    }
+                    formatted_data.append(formatted_movie)
+                
+                # Serialize the transformed data
+                serialized_data = json.dumps(formatted_data)
+                await proto.send_all(client_socket, serialized_data)
+                
+                logging.info(self.green(f"Sent {len(data)} records back to client {client_id}"))
+            except Exception as e:
+                logging.error(f"Failed to send data to client {client_id}: {e}")
+        else:
+            logging.warning(f"Client socket not found for client ID: {client_id}")
         
         # Acknowledge message
         await message.ack()
@@ -181,10 +228,17 @@ class Boundary:
         result.append(row_dict)
     
     logging.info(f"Processed {len(result)} rows into dictionary format")
-    logging.info(f"Result is: {result[:5]}")
     return result
-
-
+  
+  def _addMetaData(self, data, client_id):
+    # Yeah this is basically a one line function, but its a function bc if in the future
+    # the logic of adding meta data gets more complex is all encapsulated here.
+    message = {        
+      "clientId": client_id,
+      "data": data
+    }
+    return message
+  
   # TODO: Move to protocol class
   async def _receive_csv_batch(self, sock, proto):
     """
@@ -196,7 +250,6 @@ class Boundary:
 
     data_bytes = await proto.recv_exact(sock, msg_length)
     data = proto.decode(data_bytes)
-    # logging.info("CSV chunk received: %s", data[:50])  # show just the beginning
 
     return data
 

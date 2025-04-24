@@ -12,13 +12,13 @@ logging.basicConfig(
 
 #TODO move this to a common config file or common env var since boundary hasthis too
 BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
-YEAR = 2000
+MIN_YEAR = 2000
+MAX_YEAR = 2010
 EQ_YEAR_QUEUE_NAME = "eq_year"
 GT_YEAR_QUEUE_NAME = "gt_year"
 RELEASE_DATE = "release_date"
 EXCHANGE_NAME_PRODUCER = "filtered_by_year_exchange"
 EXCHANGE_TYPE_PRODUCER = "direct"
-EOF_MARKER = "EOF_MARKER"
 
 class Worker:
     def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[BOUNDARY_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[EQ_YEAR_QUEUE_NAME, GT_YEAR_QUEUE_NAME]):
@@ -119,21 +119,20 @@ class Worker:
     async def _process_message(self, message):
         """Process a message from the queue"""
         try:
-            # Deserialize the message body from binary to Python object
-            data = Serializer.deserialize(message.body)
+            deserialized_message = Serializer.deserialize(message.body)
+            
+            # Extract clientId and data from the deserialized message
+            client_id = deserialized_message.get("clientId")
+            data = deserialized_message.get("data")
             
             # Process the movie data - preview first item
             if data:
-                if data != EOF_MARKER:
-                    data_eq_year, data_gt_year = self._filter_data(data)
-                    if data_eq_year:
-                        await self.send_eq_year(data_eq_year)
-                    if data_gt_year:
-                        await self.send_gt_year(data_gt_year)
-                    logging.info(f"Sent {len(data_eq_year)} records to eq_year queue")
-                    logging.info(f"Processed data_eq_year: {data_eq_year}")
-                    logging.info(f"Sent {len(data_gt_year)} records to gt_year queue")
-                    logging.info(f"Processed data_gt_year: {data_gt_year}")
+                data_eq_year, data_gt_year = self._filter_data(data)
+                if data_eq_year:
+                    await self.send_eq_year(client_id, data_eq_year)
+                if data_gt_year:
+                    await self.send_gt_year(client_id, data_gt_year)
+            
             # Acknowledge message
             await message.ack()
             
@@ -142,35 +141,66 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_eq_year(self, data):
+    async def send_eq_year(self, client_id, data):
         """Send data to the eq_year queue in our exchange"""
+        message = self._addMetaData(client_id, data)
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
             routing_key=EQ_YEAR_QUEUE_NAME,
-            message=Serializer.serialize(data),
+            message=Serializer.serialize(message),
             persistent=True
         )
 
-    async def send_gt_year(self, data):
+    async def send_gt_year(self, client_id, data):
         """Send data to the gt_year queue in our exchange"""
+        message = self._addMetaData(client_id, data)
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
             routing_key=GT_YEAR_QUEUE_NAME,
-            message=Serializer.serialize(data),
+            message=Serializer.serialize(message),
             persistent=True
         )
+
+    def _addMetaData(self,client_id, data):
+        message = {        
+        "clientId": client_id,
+        "data": data
+        }
+        return message
 
     def _filter_data(self, data):
         """Filter data into two lists based on the year"""
         data_eq_year, data_gt_year = [], []
-        logging.info(f"record{str(data)}")
-        for record in data:
-            logging.info(f"record{str(record)}")
-            year = int(record.pop(RELEASE_DATE, None).split("-")[0])
-            if year == YEAR:
-                data_eq_year.append(record)
-            elif year > YEAR:
-                data_gt_year.append(record)
         
+        for record in data:
+            try:
+                release_date = str(record.get(RELEASE_DATE, ''))
+                if not release_date:
+                    continue
+                year_part = release_date.split("-")[0]
+                if not year_part:
+                    continue
+                    
+                year = int(year_part)
+                
+                del record[RELEASE_DATE]
+                
+                if self._query1(year):
+                    data_eq_year.append(record)
+                elif self._query2(year):
+                    data_gt_year.append(record)
+                    
+            except (ValueError, IndexError, AttributeError) as e:
+                logging.error(f"Error processing record {record}: {e}")
+                continue
+            
         return data_eq_year, data_gt_year
+    
+    def _query1(self, year):
+        """Check if the year is equal to the specified year"""
+        return MIN_YEAR <= year and year < MAX_YEAR
+    
+    def _query2(self, year):
+        """Check if the year is greater than the specified year"""
+        return year > MIN_YEAR
         
     def _handle_shutdown(self, *_):
         """Handle shutdown signals"""

@@ -149,14 +149,17 @@ class Worker:
     
     async def _process_message_for_gt_year(self, message):
         try:
-            data = Serializer.deserialize(message.body)
+            # Deserialize the message
+            deserialized_message = Serializer.deserialize(message.body)
+            
+            # Extract clientId and data from the deserialized message
+            client_id = deserialized_message.get("clientId")
+            data = deserialized_message.get("data")
             
             if data:
                 data_eq_one_country, _ = self._filter_data(data)
                 if data_eq_one_country:
-                    await self.send_eq_one_country(data_eq_one_country)
-                logging.info(f"Sent {len(data_eq_one_country)} records to eq_one_country queue")
-                logging.info(f"Processed data_eq_one_country: {data_eq_one_country}")
+                    await self.send_eq_one_country(client_id, data_eq_one_country)
             # Acknowledge message
             await message.ack()
         except Exception as e:
@@ -166,18 +169,21 @@ class Worker:
 
     async def _process_message_for_eq_year(self, message):
         try:
-            data = Serializer.deserialize(message.body)
+            # Deserialize the message
+            deserialized_message = Serializer.deserialize(message.body)
+            
+            # Extract clientId and data from the deserialized message
+            client_id = deserialized_message.get("clientId")
+            data = deserialized_message.get("data")
+            
+            logging.info(f'client id in eq_year queue: {client_id}')
             
             if data:
                 data_eq_one_country, data_response_queue = self._filter_data(data)
                 if data_eq_one_country:
-                    await self.send_eq_one_country(data_eq_one_country)
+                    await self.send_eq_one_country(client_id, data_eq_one_country)
                 if data_response_queue:
-                    await self.send_response_queue(data_response_queue)
-                logging.info(f"Sent {len(data_eq_one_country)} records to eq_one_country queue")
-                logging.info(f"Processed data_eq_one_country: {data_eq_one_country}")
-                logging.info(f"Sent {len(data_response_queue)} records to response_queue queue")
-                logging.info(f"Processed data_response_queue: {data_response_queue}")
+                    await self.send_response_queue(client_id, data_response_queue)
             # Acknowledge message
             await message.ack()
             
@@ -186,21 +192,31 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_eq_one_country(self, data):
+    async def send_eq_one_country(self, client_id, data):
         """Send data to the eq_one_country queue in our exchange"""
+        message = self._addMetaData(client_id, data)
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
             routing_key=EQ_ONE_COUNTRY_QUEUE_NAME,
-            message=Serializer.serialize(data),
+            message=Serializer.serialize(message),
             persistent=True
         )
 
-    async def send_response_queue(self, data):
-        """Send data to the gt_year queue in our exchange"""
+    async def send_response_queue(self, client_id, data):
+        """Send data to the response queue in our exchange"""
+        message = self._addMetaData(client_id, data)
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
             routing_key=RESPONSE_QUEUE,
-            message=Serializer.serialize(data),
+            message=Serializer.serialize(message),
             persistent=True
         )
+
+    def _addMetaData(self, client_id, data):
+        """Add metadata to the message"""
+        message = {        
+            "clientId": client_id,
+            "data": data
+        }
+        return message
 
     # TODO: Add a optional parameter to the function for one country filtering
     def _filter_data(self, data):
@@ -209,24 +225,23 @@ class Worker:
         for record in data:
             countries = (record.pop(PRODUCTION_COUNTRIES, None))
             if countries is None:
-                logging.error(f"Record missing '{PRODUCTION_COUNTRIES}' field: {record}")
+                logging.info(f"Record missing '{PRODUCTION_COUNTRIES}' field: {record}")
                 continue
             
-            # Ensure countries is a list of dictionaries
             if isinstance(countries, str):
-                # If it's a string that looks like a list, try to evaluate it
                 try:
                     countries = ast.literal_eval(countries)
                 except (SyntaxError, ValueError):
                     logging.error(f"Failed to parse countries string: {countries}")
                     continue
 
-            # Ensure we have a valid list to work with
             if not isinstance(countries, list):
                 logging.error(f"Countries is not a list after processing: {countries}")
                 continue
-                
-            record_copy = record.copy()  # Create a copy to avoid duplicating the same reference
+                    
+            record_copy = record.copy()
+            has_one_country = False
+            found_countries = set()
             
             for country_obj in countries:
                 if not isinstance(country_obj, dict):
@@ -236,10 +251,19 @@ class Worker:
                 if ISO_3166_1 in country_obj:
                     country = country_obj.get(ISO_3166_1)
                     if country == ONE_COUNTRY:
-                        data_eq_one_country.append(record_copy)
-                    elif country in N_COUNTRIES:
-                        data_response_queue.append(record_copy)
-        
+                        has_one_country = True
+                    if country in N_COUNTRIES:
+                        found_countries.add(country)
+            
+            if has_one_country:
+                data_eq_one_country.append(record_copy)
+                
+            # Only add records that contain ALL countries from N_COUNTRIES
+            # logging.info(f"Found countries in record: {len(found_countries)}")
+            # logging.info(f"Found countries in record: {found_countries}")
+            if found_countries == set(N_COUNTRIES):
+                data_response_queue.append(record_copy)
+            
         return data_eq_one_country, data_response_queue
         
     def _handle_shutdown(self, *_):
