@@ -53,13 +53,24 @@ services:
     deploy:
       replicas: 2
 
-  top_5_countries_budget_worker:
+  top_5_budget_worker:
     build:
       context: ./server
-      dockerfile: worker/top_5_countries_budget/Dockerfile
+      dockerfile: worker/top_5_budget/Dockerfile
     depends_on:
       - rabbitmq
     volumes:
-      - ./server/worker/top_5_countries_budget:/app
+      - ./server/worker/top_5_budget:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+
+  countries_budget_worker:
+    build:
+      context: ./server
+      dockerfile: worker/countries_budget/Dockerfile
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/worker/countries_budget:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common

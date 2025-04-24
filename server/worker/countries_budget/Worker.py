@@ -12,21 +12,25 @@ logging.basicConfig(
 )
 
 #TODO move this to a common config file or common env var since boundary hasthis too
-BOUNDARY_QUEUE_NAME = "top5_countries_budget_workers"
-RES_QUEUE = "query2_res"
+BOUNDARY_QUEUE_NAME = "countries_budget_workers"
+#RES_QUEUE = "query2_res"
+IMBD_ID = "imdb_id"
+ORIGINAL_TITLE = "original_title"
 RELEASE_DATE = "release_date"
-EXCHANGE_NAME_PRODUCER = "top5_countries_budget_exchange"
+EXCHANGE_NAME_PRODUCER = "countries_budget_exchange"
 EXCHANGE_TYPE_PRODUCER = "direct"
 PRODUCTION_COUNTRIES = "production_countries"
+GENRES = "genres"
 BUDGET = "budget"
 ISO_3166_1 = "iso_3166_1"
+NAME = "name"
 EOF_MARKER = "EOF_MARKER"
-RESPONSE_QUEUE = "response_queue"
+RESPONSE_QUEUE = "top_5_budget_queue"
 
 
 
 class Worker:
-    def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[BOUNDARY_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[RES_QUEUE]):
+    def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[BOUNDARY_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[RESPONSE_QUEUE]):
 
         self._running = True
         self.consumer_queue_names = consumer_queue_names
@@ -152,14 +156,14 @@ class Worker:
             await message.reject(requeue=True)
 
     async def send_dic(self):
-        """Send data to the eq_year queue in our exchange"""
-        top_5_countries = sorted(self.dictionary_countries_budget, key=self.dictionary_countries_budget.get, reverse=True)[:5]
-        logging.info(f"sending res = {str(top_5_countries)}")
+        """Send data to the top5 queue in our exchange"""
+        logging.info(f"sending res = {str(self.dictionary_countries_budget)}")
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
             routing_key=RESPONSE_QUEUE,
-            message=Serializer.serialize(top_5_countries),
+            message=Serializer.serialize(self.dictionary_countries_budget),
             persistent=True
         )
+        logging.info(f"[Worker1] Published to exchange '{self.exchange_name_producer}' routing_key='{RESPONSE_QUEUE}'")
 
 
     def _filter_data(self, data):
@@ -168,6 +172,15 @@ class Worker:
             logging.info(f"record{str(record)}")
             budget = (record.pop(BUDGET, None))
             countries = (record.pop(PRODUCTION_COUNTRIES, None))
+            genres = (record.pop(GENRES, None))
+            imdb_id = (record.pop(IMBD_ID, None))
+            original_title = (record.pop(ORIGINAL_TITLE, None))
+            release_date = (record.pop(RELEASE_DATE, None))
+
+            if genres is None or imdb_id is None or original_title is None or release_date is None:
+                logging.error(f"Record missing some field")
+                continue
+
             if countries is None:
                 logging.error(f"Record missing '{PRODUCTION_COUNTRIES}' field: {record}")
                 continue
@@ -199,8 +212,8 @@ class Worker:
                         logging.warning(f"Country object is not a dictionary: {country_obj}")
                         continue
                         
-                    if ISO_3166_1 in country_obj:
-                        country = country_obj.get(ISO_3166_1)
+                    if NAME in country_obj:
+                        country = country_obj.get(NAME)
                         self.dictionary_countries_budget[country] = self.dictionary_countries_budget.get(country, 0) + int(budget)
 
         logging.info(f"dic: {str(self.dictionary_countries_budget)}")

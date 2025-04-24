@@ -14,7 +14,7 @@ BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
 COLUMNS = {'budget':2,'genres': 3, 'imdb_id':6, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
 EOF_MARKER = "EOF_MARKER"
 RESPONSE_QUEUE = "response_queue"
-TOP_5_BUDGET_QUEUE = "top5_countries_budget_workers"
+BUDGET_QUEUE = "countries_budget_workers"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -138,10 +138,10 @@ class Boundary:
                 data = await self._receive_csv_batch(sock, proto)
                 if data == EOF_MARKER:
                     logging.info(f"EOF received from client {addr[0]}:{addr[1]}")
-                    await self._send_data_to_rabbitmq_queue(data, [TOP_5_BUDGET_QUEUE])
+                    await self._send_data_to_rabbitmq_queue(data, [BUDGET_QUEUE])
                     break
                 filtered_data = self.project_to_columns(data)
-                await self._send_data_to_rabbitmq_queue(filtered_data, [self._queue_name,TOP_5_BUDGET_QUEUE])
+                await self._send_data_to_rabbitmq_queue(filtered_data, [self._queue_name,BUDGET_QUEUE])
             except ConnectionError:
                 logging.info(f"Client {addr[0]}:{addr[1]} disconnected")
                 break

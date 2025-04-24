@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import logging
 import signal
@@ -10,18 +11,21 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-#TODO move this to a common config file or common env var since boundary hasthis too
-BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
-YEAR = 2000
-EQ_YEAR_QUEUE_NAME = "eq_year"
-GT_YEAR_QUEUE_NAME = "gt_year"
+CONSUMER_QUEUE_NAME = "top_5_budget_queue"
+RES_QUEUE = "query2_res"
 RELEASE_DATE = "release_date"
-EXCHANGE_NAME_PRODUCER = "filtered_by_year_exchange"
+EXCHANGE_NAME_PRODUCER = "top_5_budget_exchange"
 EXCHANGE_TYPE_PRODUCER = "direct"
+PRODUCTION_COUNTRIES = "production_countries"
+BUDGET = "budget"
+ISO_3166_1 = "iso_3166_1"
+NAME = "name"
 EOF_MARKER = "EOF_MARKER"
+RESPONSE_QUEUE = "response_queue"
+COUNTRIES_BUDGET_WORKERS = 1 #TODO move this into docker-compose
 
 class Worker:
-    def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[BOUNDARY_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[EQ_YEAR_QUEUE_NAME, GT_YEAR_QUEUE_NAME]):
+    def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[CONSUMER_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[RES_QUEUE]):
 
         self._running = True
         self.consumer_queue_names = consumer_queue_names
@@ -30,6 +34,8 @@ class Worker:
         self.exchange_name_producer = exchange_name_producer
         self.exchange_type_consumer = exchange_type_consumer
         self.exchange_type_producer = exchange_type_producer
+        self.dictionary_countries_budget = {}
+        self.received_messages = 0
         self.rabbitmq = RabbitMQClient()
         
         # Set up signal handlers for graceful shutdown
@@ -105,6 +111,7 @@ class Worker:
 
         # Set up consumers
         for queue_name in self.consumer_queue_names:
+            logging.info(f"[Worker2] Declared and consuming from queue '{queue_name}'")
             success = await self.rabbitmq.consume(
                 queue_name=queue_name,
                 callback=self._process_message,
@@ -123,17 +130,21 @@ class Worker:
             data = Serializer.deserialize(message.body)
             
             # Process the movie data - preview first item
-            if data:
-                if data != EOF_MARKER:
-                    data_eq_year, data_gt_year = self._filter_data(data)
-                    if data_eq_year:
-                        await self.send_eq_year(data_eq_year)
-                    if data_gt_year:
-                        await self.send_gt_year(data_gt_year)
-                    logging.info(f"Sent {len(data_eq_year)} records to eq_year queue")
-                    logging.info(f"Processed data_eq_year: {data_eq_year}")
-                    logging.info(f"Sent {len(data_gt_year)} records to gt_year queue")
-                    logging.info(f"Processed data_gt_year: {data_gt_year}")
+            if data and isinstance(data, dict):
+                self._add_dictionary(data)
+            else:
+                logging.error(f"data is not valid {data}")
+            if self.received_messages == COUNTRIES_BUDGET_WORKERS:
+                logging.info("Finalizing")
+                await self.send_dic()
+                """if data_eq_year:
+                    await self.send_eq_year(data_eq_year)
+                if data_gt_year:
+                    await self.send_gt_year(data_gt_year)"""
+                """logging.info(f"Sent {len(data_eq_year)} records to eq_year queue")
+                logging.info(f"Processed data_eq_year: {data_eq_year}")
+                logging.info(f"Sent {len(data_gt_year)} records to gt_year queue")
+                logging.info(f"Processed data_gt_year: {data_gt_year}")"""
             # Acknowledge message
             await message.ack()
             
@@ -142,35 +153,27 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_eq_year(self, data):
+    async def send_dic(self):
         """Send data to the eq_year queue in our exchange"""
+        top_5_countries = dict(sorted(self.dictionary_countries_budget.items(), key=lambda kv: kv[1], reverse=True)[:5])
+        logging.info(f"sending res = {str(top_5_countries)}")
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
-            routing_key=EQ_YEAR_QUEUE_NAME,
-            message=Serializer.serialize(data),
+            routing_key=RESPONSE_QUEUE,
+            message=Serializer.serialize(top_5_countries),
             persistent=True
         )
 
-    async def send_gt_year(self, data):
-        """Send data to the gt_year queue in our exchange"""
-        await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
-            routing_key=GT_YEAR_QUEUE_NAME,
-            message=Serializer.serialize(data),
-            persistent=True
-        )
 
-    def _filter_data(self, data):
-        """Filter data into two lists based on the year"""
-        data_eq_year, data_gt_year = [], []
-        logging.info(f"record{str(data)}")
-        for record in data:
-            logging.info(f"record{str(record)}")
-            year = int(record.pop(RELEASE_DATE, None).split("-")[0])
-            if year == YEAR:
-                data_eq_year.append(record)
-            elif year > YEAR:
-                data_gt_year.append(record)
-        
-        return data_eq_year, data_gt_year
+    def _add_dictionary(self, data):
+        """Combines received dictionary with the one that it has"""
+        self.dictionary_countries_budget = {
+            key: self.dictionary_countries_budget.get(key, 0) + data.get(key, 0)
+            for key in set(self.dictionary_countries_budget) | set(data)
+        }
+        self.received_messages+=1
+        logging.info(f"Combined dictionary to form {self.dictionary_countries_budget}")
+
+        return
         
     def _handle_shutdown(self, *_):
         """Handle shutdown signals"""
