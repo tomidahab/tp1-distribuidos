@@ -40,15 +40,52 @@ services:
     deploy:
       replicas: 2
 
-  filter_by_country_worker:
+  country_router:
+    build:
+      context: ./server
+      dockerfile: router/Dockerfile
+    env_file:
+      - ./server/router/.env
+    environment:
+      - INPUT_QUEUE=router_input
+      - OUTPUT_QUEUES=filter_by_country_worker_1,filter_by_country_worker_2
+      - EXCHANGE_NAME=country_filter_exchange
+      - BALANCER_TYPE=round_robin
+    depends_on:
+      - rabbitmq
+      - filter_by_year_worker
+    volumes:
+      - ./server/router:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+  filter_by_country_worker_1:
     build:
       context: ./server
       dockerfile: worker/filter_by_country/Dockerfile
+    env_file:
+      - ./server/worker/filter_by_country/.env
+    environment:
+      - WORKER_QUEUE=filter_by_country_worker_1
     depends_on:
       - rabbitmq
+      - country_router
     volumes:
       - ./server/worker/filter_by_country:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
-    deploy:
-      replicas: 2
+
+  filter_by_country_worker_2:
+    build:
+      context: ./server
+      dockerfile: worker/filter_by_country/Dockerfile
+    env_file:
+      - ./server/worker/filter_by_country/.env
+    environment:
+      - WORKER_QUEUE=filter_by_country_worker_2
+    depends_on:
+      - rabbitmq
+      - country_router
+    volumes:
+      - ./server/worker/filter_by_country:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
