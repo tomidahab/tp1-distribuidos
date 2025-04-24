@@ -1,8 +1,10 @@
 import asyncio
 import logging
 import signal
+import os
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
+from dotenv import load_dotenv
 import ast
 
 logging.basicConfig(
@@ -11,29 +13,38 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-#TODO move this to a common config file or common env var since boundary hasthis too
-EQ_YEAR_QUEUE_NAME = "eq_year"
-GT_YEAR_QUEUE_NAME = "gt_year"
+# Load environment variables
+load_dotenv()
+
+# Constants for query types - these match what the previous worker outputs
+QUERY_EQ_YEAR = "eq_year"
+QUERY_GT_YEAR = "gt_year"
+
+# Constants for data processing
 PRODUCTION_COUNTRIES = "production_countries"
-EQ_ONE_COUNTRY_QUEUE_NAME = "eq_one_country"
-RESPONSE_QUEUE = "response_queue"
+ISO_3166_1 = "iso_3166_1"
 ONE_COUNTRY = "AR"
 N_COUNTRIES = ["AR", "ES"]
-ISO_3166_1 = "iso_3166_1"
-EXCHANGE_NAME_CONSUMER = "filtered_by_year_exchange"
-EXCHANGE_TYPE_CONSUMER = "direct"
-EXCHANGE_NAME_PRODUCER = "filtered_by_country_exchange"
-EXCHANGE_TYPE_PRODUCER = "direct"
+
+# Output queues and exchange
+EQ_ONE_COUNTRY_QUEUE_NAME = os.getenv("EQ_ONE_COUNTRY_QUEUE", "eq_one_country")
+RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
+EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_by_country_exchange")
+EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
+
+WORKER_QUEUE = os.getenv("WORKER_QUEUE", "filter_by_country_worker")
 
 class Worker:
-    def __init__(self, exchange_name_consumer=EXCHANGE_NAME_CONSUMER, exchange_type_consumer=EXCHANGE_TYPE_CONSUMER, consumer_queue_names=[EQ_YEAR_QUEUE_NAME, GT_YEAR_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[EQ_ONE_COUNTRY_QUEUE_NAME, RESPONSE_QUEUE]):
+    def __init__(self, 
+                 consumer_queue_name=WORKER_QUEUE, 
+                 exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
+                 exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
+                 producer_queue_names=[EQ_ONE_COUNTRY_QUEUE_NAME, RESPONSE_QUEUE]):
 
         self._running = True
-        self.consumer_queue_names = consumer_queue_names
+        self.consumer_queue_name = consumer_queue_name
         self.producer_queue_names = producer_queue_names
-        self.exchange_name_consumer = exchange_name_consumer
         self.exchange_name_producer = exchange_name_producer
-        self.exchange_type_consumer = exchange_type_consumer
         self.exchange_type_producer = exchange_type_producer
         self.rabbitmq = RabbitMQClient()
         
@@ -41,7 +52,8 @@ class Worker:
         signal.signal(signal.SIGINT, self._handle_shutdown)
         signal.signal(signal.SIGTERM, self._handle_shutdown)
         
-        logging.info(f"Worker initialized for consumer queues '{consumer_queue_names}', producer queues '{producer_queue_names}', exchange consumer '{exchange_name_consumer}' and exchange producer '{exchange_name_producer}'")
+        logging.info(f"Worker initialized for consumer queue '{consumer_queue_name}', producer queues '{producer_queue_names}'")
+        logging.info(f"Exchange producer: '{exchange_name_producer}', type: '{exchange_type_producer}'")
     
     async def run(self):
         """Run the worker, connecting to RabbitMQ and consuming messages"""
@@ -50,10 +62,9 @@ class Worker:
             logging.error(f"Failed to set up RabbitMQ connection. Exiting.")
             return False
         
-        logging.info(f"Worker running and consuming from queue '{self.consumer_queue_names}'")
+        logging.info(f"Worker running and consuming from queue '{self.consumer_queue_name}'")
         
         # Keep the worker running until shutdown is triggered
-        # TODO check this later
         while self._running:
             await asyncio.sleep(1)
             
@@ -65,40 +76,20 @@ class Worker:
         connected = await self.rabbitmq.connect()
         if not connected:
             logging.error(f"Failed to connect to RabbitMQ, retrying in {retry_count} seconds...")
-            await asyncio.sleep(2 ** retry_count)
+            wait_time = min(30, 2 ** retry_count)
+            await asyncio.sleep(wait_time)
             return await self._setup_rabbitmq(retry_count + 1)
         
         # -------------------- CONSUMER --------------------
-
-        # Declare exchange (idempotent operation)
-        exchange = await self.rabbitmq.declare_exchange(
-            name=self.exchange_name_consumer,
-            exchange_type=self.exchange_type_consumer,
-            durable=True
-        )
-        if not exchange:
-            logging.error(f"Failed to declare exchange '{self.exchange_name_consumer}'")
+        # Declare input queue (from router)
+        queue = await self.rabbitmq.declare_queue(self.consumer_queue_name, durable=True)
+        if not queue:
+            logging.error(f"Failed to declare consumer queue '{self.consumer_queue_name}'")
             return False
-        # Declare queues (idempotent operation)
-        for queue_name in self.consumer_queue_names:
-            queue = await self.rabbitmq.declare_queue(queue_name, durable=True)
-            if not queue:
-                return False
-            # Bind queues to exchange
-            success = await self.rabbitmq.bind_queue(
-                queue_name=queue_name,
-                exchange_name=self.exchange_name_consumer,
-                routing_key=queue_name
-            )
-            if not success:
-                logging.error(f"Failed to bind queue '{queue_name}' to exchange '{self.exchange_name_consumer}'")
-                return False
         # --------------------------------------------------
 
-
         # -------------------- PRODUCER --------------------
-
-        # Declare exchange (idempotent operation)
+        # Declare exchange
         exchange = await self.rabbitmq.declare_exchange(
             name=self.exchange_name_producer,
             exchange_type=self.exchange_type_producer,
@@ -108,11 +99,13 @@ class Worker:
             logging.error(f"Failed to declare exchange '{self.exchange_name_producer}'")
             return False
         
-        # Declare queues (idempotent operation)
+        # Declare output queues
         for queue_name in self.producer_queue_names:
             queue = await self.rabbitmq.declare_queue(queue_name, durable=True)
             if not queue:
+                logging.error(f"Failed to declare producer queue '{queue_name}'")
                 return False        
+            
             # Bind queues to exchange
             success = await self.rabbitmq.bind_queue(
                 queue_name=queue_name,
@@ -124,66 +117,52 @@ class Worker:
                 return False
         # --------------------------------------------------
         
+        # Set up consumer for the input queue
+        success = await self.rabbitmq.consume(
+            queue_name=self.consumer_queue_name,
+            callback=self._process_message,
+            no_ack=False
+        )
+        
+        if not success:
+            logging.error(f"Failed to set up consumer for queue '{self.consumer_queue_name}'")
+            return False
 
-        # Set up consumers
-        for queue_name in self.consumer_queue_names:
-            if queue_name == EQ_YEAR_QUEUE_NAME:
-                success = await self.rabbitmq.consume(
-                    queue_name=queue_name,
-                    callback=self._process_message_for_eq_year,
-                    no_ack=False
-                )
-                if not success:
-                    logging.error(f"Failed to set up consumer for queue '{queue_name}'")
-                    return False
-            elif queue_name == GT_YEAR_QUEUE_NAME:
-                success = await self.rabbitmq.consume(
-                    queue_name=queue_name,
-                    callback=self._process_message_for_gt_year,
-                    no_ack=False
-                )
-                if not success:
-                    logging.error(f"Failed to set up consumer for queue '{queue_name}'")
-                    return False
         return True
     
-    async def _process_message_for_gt_year(self, message):
+    async def _process_message(self, message):
+        """Process a message based on its query type"""
         try:
             # Deserialize the message
             deserialized_message = Serializer.deserialize(message.body)
             
-            # Extract clientId and data from the deserialized message
+            # Extract clientId, data, and query from the deserialized message
             client_id = deserialized_message.get("clientId")
             data = deserialized_message.get("data")
+            query_type = deserialized_message.get("query")
             
-            if data:
-                data_eq_one_country, _ = self._filter_data(data)
-                if data_eq_one_country:
-                    await self.send_eq_one_country(client_id, data_eq_one_country)
-            # Acknowledge message
-            await message.ack()
-        except Exception as e:
-            logging.error(f"Error processing message: {e}")
-            # Reject the message and requeue it
-            await message.reject(requeue=True)
-
-    async def _process_message_for_eq_year(self, message):
-        try:
-            # Deserialize the message
-            deserialized_message = Serializer.deserialize(message.body)
+            logging.info(f"Received message with query type: {query_type}, client ID: {client_id}")
             
-            # Extract clientId and data from the deserialized message
-            client_id = deserialized_message.get("clientId")
-            data = deserialized_message.get("data")
-            
-            logging.info(f'client id in eq_year queue: {client_id}')
-            
-            if data:
+            if not data:
+                logging.warning(f"Received message with no data, client ID: {client_id}")
+                await message.ack()
+                return
+                
+            if query_type == QUERY_EQ_YEAR:
                 data_eq_one_country, data_response_queue = self._filter_data(data)
                 if data_eq_one_country:
                     await self.send_eq_one_country(client_id, data_eq_one_country)
                 if data_response_queue:
                     await self.send_response_queue(client_id, data_response_queue)
+                    
+            elif query_type == QUERY_GT_YEAR:
+                data_eq_one_country, _ = self._filter_data(data)
+                if data_eq_one_country:
+                    await self.send_eq_one_country(client_id, data_eq_one_country)
+                    
+            else:
+                logging.warning(f"Unknown query type: {query_type}, client ID: {client_id}")
+            
             # Acknowledge message
             await message.ack()
             
@@ -194,23 +173,33 @@ class Worker:
 
     async def send_eq_one_country(self, client_id, data):
         """Send data to the eq_one_country queue in our exchange"""
-        message = self._addMetaData(client_id, data)
-        await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
+        message = self._add_metadata(client_id, data)
+        success = await self.rabbitmq.publish(
+            exchange_name=self.exchange_name_producer,
             routing_key=EQ_ONE_COUNTRY_QUEUE_NAME,
             message=Serializer.serialize(message),
             persistent=True
         )
+        if success:
+            logging.info(f"Sent {len(data)} records to eq_one_country queue")
+        else:
+            logging.error(f"Failed to send data to eq_one_country queue")
 
     async def send_response_queue(self, client_id, data):
         """Send data to the response queue in our exchange"""
-        message = self._addMetaData(client_id, data)
-        await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
+        message = self._add_metadata(client_id, data)
+        success = await self.rabbitmq.publish(
+            exchange_name=self.exchange_name_producer,
             routing_key=RESPONSE_QUEUE,
             message=Serializer.serialize(message),
             persistent=True
         )
+        if success:
+            logging.info(f"Sent {len(data)} records to response queue")
+        else:
+            logging.error(f"Failed to send data to response queue")
 
-    def _addMetaData(self, client_id, data):
+    def _add_metadata(self, client_id, data):
         """Add metadata to the message"""
         message = {        
             "clientId": client_id,
@@ -218,10 +207,10 @@ class Worker:
         }
         return message
 
-    # TODO: Add a optional parameter to the function for one country filtering
     def _filter_data(self, data):
         """Filter data into two lists based on the country"""
         data_eq_one_country, data_response_queue = [], []
+        
         for record in data:
             countries = (record.pop(PRODUCTION_COUNTRIES, None))
             if countries is None:
@@ -259,8 +248,6 @@ class Worker:
                 data_eq_one_country.append(record_copy)
                 
             # Only add records that contain ALL countries from N_COUNTRIES
-            # logging.info(f"Found countries in record: {len(found_countries)}")
-            # logging.info(f"Found countries in record: {found_countries}")
             if found_countries == set(N_COUNTRIES):
                 data_response_queue.append(record_copy)
             
