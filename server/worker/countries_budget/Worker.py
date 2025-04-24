@@ -169,7 +169,7 @@ class Worker:
     def _filter_data(self, data):
         """Filter data and puts it in its dictionary"""
         for record in data:
-            logging.info(f"record{str(record)}")
+            #logging.info(f"record{str(record)}")
             budget = (record.pop(BUDGET, None))
             countries = (record.pop(PRODUCTION_COUNTRIES, None))
             genres = (record.pop(GENRES, None))

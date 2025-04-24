@@ -6,6 +6,7 @@ import uuid
 from Protocol import Protocol
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 import csv
+import json
 from io import StringIO
 from common.Serializer import Serializer
 
@@ -185,10 +186,12 @@ class Boundary:
                 data = await self._receive_csv_batch(sock, proto)
                 if data == EOF_MARKER:
                     logging.info(f"EOF received from client {addr[0]}:{addr[1]}")
-                    await self._send_data_to_rabbitmq_queue(data, [BUDGET_QUEUE])
+                    await self._send_data_to_rabbitmq_queue(data, BUDGET_QUEUE)
                     break
                 filtered_data = self.project_to_columns(data)
-                await self._send_data_to_rabbitmq_queue(filtered_data, [self._queue_name,BUDGET_QUEUE])
+                await self._send_data_to_rabbitmq_queue(filtered_data, BUDGET_QUEUE)
+                data_with_metadata = self._addMetaData(filtered_data, client_id)
+                await self._send_data_to_rabbitmq_queue(data_with_metadata, self._queue_name)
             except ConnectionError:
                 logging.info(f"Client {addr[0]}:{addr[1]} disconnected")
                 break
@@ -269,19 +272,18 @@ class Boundary:
     
 
   
-  async def _send_data_to_rabbitmq_queue(self, data, queues):
+  async def _send_data_to_rabbitmq_queue(self, data, queue):
     """
     Send the data to RabbitMQ queue after serializing it
     """
     try:
         # Serialize the data to binary
         serialized_data = Serializer.serialize(data)
-        for queue in queues:
-          success = await self.rabbitmq.publish_to_queue(
-              queue_name=queue,
-              message=serialized_data,
-              persistent=True
-          )
+        success = await self.rabbitmq.publish_to_queue(
+            queue_name=queue,
+            message=serialized_data,
+            persistent=True
+        )
         
         if success:
             logging.info(f"Data published to RabbitMQ queue ({len(data)} rows)")
