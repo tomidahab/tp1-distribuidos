@@ -132,7 +132,6 @@ class Client:
             while self.receiver_running and self.skt:
                 try:
                     response_data = self.protocol.recv_response(self.skt)
-                    logging.info(f"Received data: {response_data[:10]}...")
                     try:
 
                         parsed_data = json.loads(response_data)
