@@ -6,16 +6,18 @@ from common.Serializer import Serializer
 from load_balancer.factory import create_balancer
 
 class RouterWorker:
-    def __init__(self, input_queue, output_queues, exchange_name, exchange_type="direct", balancer_type="roundrobin"):
+    def __init__(self, number_of_producer_workers, input_queue, output_queues, exchange_name, exchange_type="direct", balancer_type="roundrobin"):
         """Initialize the router worker
         
         Args:
+            number_of_producer_workers (int): Number of producer workers to create
             input_queue (str): Name of queue to consume messages from
             output_queues (list): List of queue names to distribute messages to
             exchange_name (str): Name of the exchange to publish messages to
             exchange_type (str): Type of exchange to use
             balancer_type (str): Type of load balancer to use (e.g., "roundrobin")
         """
+        self.number_of_producer_workers = number_of_producer_workers
         self.input_queue = input_queue
         self.output_queues = output_queues
         self.exchange_name = exchange_name
@@ -23,6 +25,7 @@ class RouterWorker:
         self.rabbit_client = RabbitMQClient()
         self.balancer = create_balancer(balancer_type, output_queues)
         self.running = False
+        self.end_of_file_received = {}
         
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -113,7 +116,11 @@ class RouterWorker:
                 return
 
             if eof_marker:
-                await self._send_eof_to_all_queues(client_id)
+                self.end_of_file_received[client_id] = self.end_of_file_received.get(client_id, 0) + 1
+                logging.info(f"Received EOF marker for client {client_id} - count: {self.end_of_file_received[client_id]}")
+                if self.end_of_file_received[client_id] >= self.number_of_producer_workers:
+                    await self._send_eof_to_all_queues(client_id)
+                    self.end_of_file_received[client_id] = 0
                 await message.ack()
                 return
                 
@@ -214,4 +221,4 @@ class RouterWorker:
             if not success:
                 logging.error(f"Failed to send EOF marker to queue {queue} for client {client_id}")
         
-        logging.info(f"\033[91mReceived EOF_MARKER for client {client_id}. Sent to all queues successfully\033[0m")
+        # logging.info(f"\033[91mReceived EOF_MARKER for client {client_id}. Sent to all queues successfully\033[0m")

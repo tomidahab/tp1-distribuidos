@@ -139,7 +139,7 @@ class Worker:
             eof_marker = deserialized_message.get("EOF_MARKER")
 
             if eof_marker:
-                logging.info(f"\033[93mReceived EOF marker for clientId '{client_id}'\033[0m")
+                # logging.info(f"\033[93mReceived EOF marker for clientId '{client_id}'\033[0m")
                 # await self.send_data(client_id, data, QUERY_EQ_YEAR, True)
                 await self.send_data(client_id, data, QUERY_GT_YEAR, True)
                 await message.ack()

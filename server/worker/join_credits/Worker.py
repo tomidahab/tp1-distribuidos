@@ -26,9 +26,6 @@ ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_data_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
 
-# Maximum number of EOF markers to process before switching queues
-MAX_EOF_MARKERS = int(os.getenv("MAX_EOF_MARKERS", 2))
-
 class Worker:
     def __init__(self, 
                  consumer_queue_names=[MOVIES_ROUTER_CONSUME_QUEUE, CREDITS_ROUTER_CONSUME_QUEUE], 
@@ -50,9 +47,6 @@ class Worker:
         
         # Data store for processing
         self.collected_data = {}
-        
-        # number of EOF markers received
-        self.eof_markers = 0
 
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -184,12 +178,9 @@ class Worker:
             client_id = deserialized_message.get("clientId")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER")
-            if eof_marker:
-                self.eof_markers += 1
             # Check if this is an EOF marker message
-            if self.eof_markers == MAX_EOF_MARKERS:
-                logging.info(f"Received EOF marker for client {client_id}. Switching to next queue.")
-                self.eof_markers = 0  # Reset EOF markers count
+            if eof_marker:
+                logging.info(f"\033[93mReceived EOF marker for clientId '{client_id}' for current_queue_index {self.current_queue_index}\033[0m")
                 if self.current_queue_index == 1  and client_id in self.collected_data:
                     del self.collected_data[client_id]
                     await self.send_data(client_id, data)
@@ -234,28 +225,29 @@ class Worker:
         This is a simplified implementation - replace with your actual join logic
         """
         try:
-            # Sample join logic - replace with your actual implementation
-            if not movies_data or not credits_data:
-                return []
+            return []
+            # # Sample join logic - replace with your actual implementation
+            # if not movies_data or not credits_data:
+            #     return []
                 
-            # Create a dict to efficiently look up credits by movie ID
-            credits_dict = {}
-            for credits in credits_data:
-                movie_id = credits.get("movie_id")
-                if movie_id:
-                    credits_dict[movie_id] = credits
+            # # Create a dict to efficiently look up credits by movie ID
+            # credits_dict = {}
+            # for credits in credits_data:
+            #     movie_id = credits.get("movie_id")
+            #     if movie_id:
+            #         credits_dict[movie_id] = credits
             
-            # Join movies with their credits
-            joined_data = []
-            for movie in movies_data:
-                movie_id = movie.get("id")
-                if movie_id and movie_id in credits_dict:
-                    # Create a new object with combined data
-                    joined_movie = {**movie, **credits_dict[movie_id]}
-                    joined_data.append(joined_movie)
+            # # Join movies with their credits
+            # joined_data = []
+            # for movie in movies_data:
+            #     movie_id = movie.get("id")
+            #     if movie_id and movie_id in credits_dict:
+            #         # Create a new object with combined data
+            #         joined_movie = {**movie, **credits_dict[movie_id]}
+            #         joined_data.append(joined_movie)
             
-            logging.info(f"Joined {len(joined_data)} movies with credits")
-            return joined_data
+            # logging.info(f"Joined {len(joined_data)} movies with credits")
+            # return joined_data
             
         except Exception as e:
             logging.error(f"Error joining data: {e}")

@@ -27,7 +27,7 @@ ONE_COUNTRY = "AR"
 N_COUNTRIES = ["AR", "ES"]
 
 # Output queues and exchange
-EQ_ONE_COUNTRY_QUEUE_NAME = os.getenv("EQ_ONE_COUNTRY_QUEUE", "eq_one_country")
+ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
 RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_by_country_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
@@ -39,7 +39,7 @@ class Worker:
                  consumer_queue_name=ROUTER_CONSUME_QUEUE, 
                  exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
                  exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
-                 producer_queue_names=[EQ_ONE_COUNTRY_QUEUE_NAME, RESPONSE_QUEUE]):
+                 producer_queue_names=[ROUTER_PRODUCER_QUEUE, RESPONSE_QUEUE]):
 
         self._running = True
         self.consumer_queue_name = consumer_queue_name
@@ -142,7 +142,7 @@ class Worker:
             query_type = deserialized_message.get("query")
             eof_marker = deserialized_message.get("EOF_MARKER")
             if eof_marker:
-                logging.info(f"\033[93mReceived EOF marker for clientId '{client_id}'\033[0m")
+                # logging.info(f"\033[93mReceived EOF marker for clientId '{client_id}'\033[0m")
                 await self.send_eq_one_country(client_id, data, self.producer_queue_names[0], True)
                 await message.ack()
                 return
@@ -175,7 +175,7 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_eq_one_country(self, client_id, data, queue_name=EQ_ONE_COUNTRY_QUEUE_NAME, eof_marker=False):
+    async def send_eq_one_country(self, client_id, data, queue_name=ROUTER_PRODUCER_QUEUE, eof_marker=False):
         """Send data to the eq_one_country queue in our exchange"""
         message = self._add_metadata(client_id, data, eof_marker)
         success = await self.rabbitmq.publish(
