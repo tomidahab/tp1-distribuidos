@@ -133,13 +133,13 @@ class Worker:
         try:
             deserialized_message = Serializer.deserialize(message.body)
             
-            # Extract clientId and data from the deserialized message
-            client_id = deserialized_message.get("clientId")
+            # Extract client_id and data from the deserialized message
+            client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER")
 
             if eof_marker:
-                # logging.info(f"\033[93mReceived EOF marker for clientId '{client_id}'\033[0m")
+                # logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}'\033[0m")
                 # await self.send_data(client_id, data, QUERY_EQ_YEAR, True)
                 await self.send_data(client_id, data, QUERY_GT_YEAR, True)
                 await message.ack()
@@ -176,7 +176,7 @@ class Worker:
     def _add_metadata(self, client_id, data, query_type, eof_marker):
         """Add metadata including query type to the message"""
         message = {        
-            "clientId": client_id,
+            "client_id": client_id,
             "data": data,
             "query": query_type,
             "EOF_MARKER": eof_marker,

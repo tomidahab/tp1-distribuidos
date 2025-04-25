@@ -136,13 +136,13 @@ class Worker:
             # Deserialize the message
             deserialized_message = Serializer.deserialize(message.body)
             
-            # Extract clientId, data, and query from the deserialized message
-            client_id = deserialized_message.get("clientId")
+            # Extract client_id, data, and query from the deserialized message
+            client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             query_type = deserialized_message.get("query")
             eof_marker = deserialized_message.get("EOF_MARKER")
             if eof_marker:
-                # logging.info(f"\033[93mReceived EOF marker for clientId '{client_id}'\033[0m")
+                # logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}'\033[0m")
                 await self.send_eq_one_country(client_id, data, self.producer_queue_names[0], True)
                 await message.ack()
                 return
@@ -155,14 +155,16 @@ class Worker:
             if query_type == QUERY_EQ_YEAR:
                 data_eq_one_country, data_response_queue = self._filter_data(data)
                 if data_eq_one_country:
-                    await self.send_eq_one_country(client_id, data_eq_one_country, self.producer_queue_names[0])
+                    projected_data = self._project_to_columns(data_eq_one_country)
+                    await self.send_eq_one_country(client_id, projected_data, self.producer_queue_names[0])
                 if data_response_queue:
                     await self.send_response_queue(client_id, data_response_queue, self.producer_queue_names[1])
                     
             elif query_type == QUERY_GT_YEAR:
                 data_eq_one_country, _ = self._filter_data(data)
                 if data_eq_one_country:
-                    await self.send_eq_one_country(client_id, data_eq_one_country, self.producer_queue_names[0])
+                    projected_data = self._project_to_columns(data_eq_one_country)
+                    await self.send_eq_one_country(client_id, projected_data, self.producer_queue_names[0])
                     
             else:
                 logging.warning(f"Unknown query type: {query_type}, client ID: {client_id}")
@@ -174,6 +176,18 @@ class Worker:
             logging.error(f"Error processing message: {e}")
             # Reject the message and requeue it
             await message.reject(requeue=True)
+
+    def _project_to_columns(self, data):
+        """Project the data to only include the 'id' column"""
+        if not data:
+            return []
+
+        projected_data = []
+        for record in data:
+            if 'id' in record:
+                projected_data.append(record['id'])
+
+        return projected_data
 
     async def send_eq_one_country(self, client_id, data, queue_name=ROUTER_PRODUCER_QUEUE, eof_marker=False):
         """Send data to the eq_one_country queue in our exchange"""
@@ -202,7 +216,7 @@ class Worker:
     def _add_metadata(self, client_id, data, eof_marker=False):
         """Add metadata to the message"""
         message = {        
-            "clientId": client_id,
+            "client_id": client_id,
             "EOF_MARKER": eof_marker,
             "data": data
         }

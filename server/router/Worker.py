@@ -104,14 +104,14 @@ class RouterWorker:
             deserialized_message = Serializer.deserialize(message.body)
             
             # Extract the necessary information from the message
-            client_id = deserialized_message.get("clientId")
+            client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER")
             query = deserialized_message.get("query")
             
 
             if not client_id:
-                logging.warning("Received message with missing clientId")
+                logging.warning("Received message with missing client_id")
                 await message.ack()
                 return
 
@@ -133,7 +133,7 @@ class RouterWorker:
                 
             # Prepare message to publish - maintain the query field if present
             outgoing_message = {
-                "clientId": client_id,
+                "client_id": client_id,
                 "data": data,
                 "EOF_MARKER": eof_marker
             }
@@ -207,7 +207,7 @@ class RouterWorker:
     async def _send_eof_to_all_queues(self, client_id):
         """Send EOF marker to all output queues for a specific client ID"""
         eof_message = {
-            "clientId": client_id,
+            "client_id": client_id,
             "data": None,
             "EOF_MARKER": True
         }

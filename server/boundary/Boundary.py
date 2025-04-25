@@ -126,8 +126,8 @@ class Boundary:
         # Deserialize the message
         deserialized_message = Serializer.deserialize(message.body)
         
-        # Extract clientId and data from the deserialized message
-        client_id = deserialized_message.get("clientId")
+        # Extract client_id and data from the deserialized message
+        client_id = deserialized_message.get("client_id")
         data = deserialized_message.get("data")
         
         if not data:
@@ -212,7 +212,7 @@ class Boundary:
                 if csvs_received == MOVIES_CSV:
                     # Process and send to movies router
                     filtered_data = self._project_to_columns(data, COLUMNS_Q1)
-                    prepared_data = self._addMetaData(filtered_data, client_id)
+                    prepared_data = self._addMetaData(client_id, filtered_data)
                     await self._send_data_to_rabbitmq_queue(prepared_data, self.movies_router_queue)
                 
                 elif csvs_received == CREDITS_CSV:
@@ -220,13 +220,13 @@ class Boundary:
                     # For now, just forward the raw data - you can add specific processing later
                     filtered_data = self._project_to_columns(data, COLUMNS_Q4)
                     filtered_data = self._removed_cast_extra_data(filtered_data)
-                    prepared_data = self._addMetaData(filtered_data, client_id)
+                    prepared_data = self._addMetaData(client_id, filtered_data)
                     await self._send_data_to_rabbitmq_queue(prepared_data, self.credits_router_queue)
                 
                 elif csvs_received == RATINGS_CSV:
                     # Process and send to ratings router
                     # For now, just forward the raw data - you can add specific processing later
-                    prepared_data = self._addMetaData(data, client_id)
+                    prepared_data = self._addMetaData(client_id, data)
                     await self._send_data_to_rabbitmq_queue(prepared_data, self.ratings_router_queue)
                 
             except ConnectionError:
@@ -237,7 +237,7 @@ class Boundary:
         logging.error(f"Client {addr[0]}:{addr[1]} error: {exc}")
 
   async def _send_eof_marker(self, csvs_received, client_id):
-        prepared_data = self._addMetaData(None, client_id, True)
+        prepared_data = self._addMetaData(client_id, None, True)
         if csvs_received == MOVIES_CSV:
            await self._send_data_to_rabbitmq_queue(prepared_data, self.movies_router_queue)
         elif csvs_received == CREDITS_CSV:
@@ -292,9 +292,9 @@ class Boundary:
     
     return result
   
-  def _addMetaData(self, data, client_id, is_eof_marker=False):
+  def _addMetaData(self, client_id, data, is_eof_marker=False):
     message = {        
-      "clientId": client_id,
+      "client_id": client_id,
       "data": data,
       "EOF_MARKER": is_eof_marker
     }
