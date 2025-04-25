@@ -33,6 +33,28 @@ services:
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
 
+
+
+# ---------------- START OF BOUNDARY ROUTERS ----------------
+
+  year_movies_router:
+    build:
+      context: ./server
+      dockerfile: router/Dockerfile
+    env_file:
+      - ./server/router/.env
+    environment:
+      - NUMBER_OF_PRODUCER_WORKERS=1
+      - INPUT_QUEUE=boundary_movies_router
+      - OUTPUT_QUEUES=filter_by_year_worker_1,filter_by_year_worker_2
+      - BALANCER_TYPE=round_robin
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/router:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+
   join_credits_router:
     build:
       context: ./server
@@ -40,6 +62,7 @@ services:
     env_file:
       - ./server/router/.env
     environment:
+      - NUMBER_OF_PRODUCER_WORKERS=1
       - INPUT_QUEUE=boundary_credits_router
       # - OUTPUT_QUEUES=join_credits_worker_1_credits,join_credits_worker_2_credits
       - OUTPUT_QUEUES=join_credits_worker_1_credits
@@ -51,6 +74,14 @@ services:
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
       
+
+# ---------------- END OF BOUNDARY ROUTERS ----------------
+
+
+
+
+
+    
   join_credits_worker_1:
     build:
       context: ./server
@@ -63,47 +94,12 @@ services:
       - ROUTER_PRODUCER_QUEUE=TODO_ROUTER_COUNT
     depends_on:
       - rabbitmq
-      - join_credits_router
     volumes:
       - ./server/worker/join_credits:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
 
-  # join_credits_worker_2:
-  #   build:
-  #     context: ./server
-  #     dockerfile: worker/join_credits/Dockerfile
-  #   env_file:
-  #     - ./server/worker/join_credits/.env
-  #   environment:
-  #     - ROUTER_CONSUME_QUEUE_MOVIES=join_credits_worker_2_movies
-  #     - ROUTER_CONSUME_QUEUE_CREDITS=join_credits_worker_2_credits
-  #     - ROUTER_PRODUCER_QUEUE=TODO_ROUTER_COUNT
-  #   depends_on:
-  #     - rabbitmq
-  #     - join_credits_router
-  #   volumes:
-  #     - ./server/worker/join_credits:/app
-  #     - ./server/rabbitmq:/app/rabbitmq
-  #     - ./server/common:/app/common
 
-  year_movies_router:
-    build:
-      context: ./server
-      dockerfile: router/Dockerfile
-    env_file:
-      - ./server/router/.env
-    environment:
-      - INPUT_QUEUE=boundary_movies_router
-      - OUTPUT_QUEUES=filter_by_year_worker_1,filter_by_year_worker_2
-      - BALANCER_TYPE=round_robin
-    depends_on:
-      - rabbitmq
-    volumes:
-      - ./server/router:/app
-      - ./server/rabbitmq:/app/rabbitmq
-      - ./server/common:/app/common
-      
   filter_by_year_worker_1:
     build:
       context: ./server
@@ -112,7 +108,7 @@ services:
       - ./server/worker/filter_by_year/.env
     environment:
       - ROUTER_CONSUME_QUEUE=filter_by_year_worker_1
-      - ROUTER_PRODUCER_QUEUE=year_worker
+      - ROUTER_PRODUCER_QUEUE=country_router
     depends_on:
       - rabbitmq
     volumes:
@@ -128,7 +124,7 @@ services:
       - ./server/worker/filter_by_year/.env
     environment:
       - ROUTER_CONSUME_QUEUE=filter_by_year_worker_2
-      - ROUTER_PRODUCER_QUEUE=year_worker
+      - ROUTER_PRODUCER_QUEUE=country_router
     depends_on:
       - rabbitmq
     volumes:
@@ -143,7 +139,8 @@ services:
     env_file:
       - ./server/router/.env
     environment:
-      - INPUT_QUEUE=year_worker
+      - NUMBER_OF_PRODUCER_WORKERS=2
+      - INPUT_QUEUE=country_router
       - OUTPUT_QUEUES=filter_by_country_worker_1,filter_by_country_worker_2
       - BALANCER_TYPE=round_robin
     depends_on:
@@ -161,9 +158,9 @@ services:
       - ./server/worker/filter_by_country/.env
     environment:
       - ROUTER_CONSUME_QUEUE=filter_by_country_worker_1
+      - ROUTER_PRODUCER_QUEUE=join_movies_credits_router
     depends_on:
       - rabbitmq
-      - country_router
     volumes:
       - ./server/worker/filter_by_country:/app
       - ./server/rabbitmq:/app/rabbitmq
@@ -177,9 +174,9 @@ services:
       - ./server/worker/filter_by_country/.env
     environment:
       - ROUTER_CONSUME_QUEUE=filter_by_country_worker_2
+      - ROUTER_PRODUCER_QUEUE=join_movies_credits_router
     depends_on:
       - rabbitmq
-      - country_router
     volumes:
       - ./server/worker/filter_by_country:/app
       - ./server/rabbitmq:/app/rabbitmq
@@ -193,7 +190,8 @@ services:
     env_file:
       - ./server/router/.env
     environment:
-      - INPUT_QUEUE=eq_one_country
+      - NUMBER_OF_PRODUCER_WORKERS=2
+      - INPUT_QUEUE=join_movies_credits_router
       # - OUTPUT_QUEUES=join_credits_worker_1_movies,join_credits_worker_2_movies
       - OUTPUT_QUEUES=join_credits_worker_1_movies
       - BALANCER_TYPE=hash_function
