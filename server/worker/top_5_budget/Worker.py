@@ -126,8 +126,12 @@ class Worker:
     async def _process_message(self, message):
         """Process a message from the queue"""
         try:
-            # Deserialize the message body from binary to Python object
-            data = Serializer.deserialize(message.body)
+            # Deserialize the message
+            deserialized_message = Serializer.deserialize(message.body)
+            
+            # Extract clientId and data from the deserialized message
+            client_id = deserialized_message.get("clientId")
+            data = deserialized_message.get("data")
             
             # Process the movie data - preview first item
             if data and isinstance(data, dict):
@@ -136,7 +140,7 @@ class Worker:
                 logging.error(f"data is not valid {data}")
             if self.received_messages == COUNTRIES_BUDGET_WORKERS:
                 logging.info("Finalizing")
-                await self.send_dic()
+                await self.send_dic(client_id)
                 """if data_eq_year:
                     await self.send_eq_year(data_eq_year)
                 if data_gt_year:
@@ -153,16 +157,27 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_dic(self):
+    async def send_dic(self, client_id):
         """Send data to the eq_year queue in our exchange"""
         top_5_countries = dict(sorted(self.dictionary_countries_budget.items(), key=lambda kv: kv[1], reverse=True)[:5])
         logging.info(f"sending res = {str(top_5_countries)}")
+        message = self._addMetaData(top_5_countries,client_id)
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
             routing_key=RESPONSE_QUEUE,
-            message=Serializer.serialize(top_5_countries),
+            message=Serializer.serialize(message),
             persistent=True
         )
 
+    
+    def _addMetaData(self, data, client_id):
+        # Yeah this is basically a one line function, but its a function bc if in the future
+        # the logic of adding meta data gets more complex is all encapsulated here.
+        message = {        
+        "clientId": client_id,
+        "data": data
+        }
+        return message
+  
 
     def _add_dictionary(self, data):
         """Combines received dictionary with the one that it has"""

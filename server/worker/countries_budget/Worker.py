@@ -126,19 +126,32 @@ class Worker:
 
         return True
     
+    def _addMetaData(self, data, client_id):
+        # Yeah this is basically a one line function, but its a function bc if in the future
+        # the logic of adding meta data gets more complex is all encapsulated here.
+        message = {        
+        "clientId": client_id,
+        "data": data
+        }
+        return message
+  
+    
     async def _process_message(self, message):
         """Process a message from the queue"""
         try:
-            # Deserialize the message body from binary to Python object
-            data = Serializer.deserialize(message.body)
+            # Deserialize the message
+            deserialized_message = Serializer.deserialize(message.body)
             
-            # Process the movie data - preview first item
+            # Extract clientId and data from the deserialized message
+            client_id = deserialized_message.get("clientId")
+            data = deserialized_message.get("data")
+
             if data:
                 if data != EOF_MARKER:
                     self._filter_data(data)
                 else:
                     logging.info("Received a EOF")
-                    await self.send_dic()
+                    await self.send_dic(client_id)
                 """if data_eq_year:
                     await self.send_eq_year(data_eq_year)
                 if data_gt_year:
@@ -155,12 +168,13 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_dic(self):
+    async def send_dic(self,client_id):
         """Send data to the top5 queue in our exchange"""
         logging.info(f"sending res = {str(self.dictionary_countries_budget)}")
+        message = self._addMetaData(self.dictionary_countries_budget,client_id)
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
             routing_key=RESPONSE_QUEUE,
-            message=Serializer.serialize(self.dictionary_countries_budget),
+            message=Serializer.serialize(message),
             persistent=True
         )
         logging.info(f"[Worker1] Published to exchange '{self.exchange_name_producer}' routing_key='{RESPONSE_QUEUE}'")

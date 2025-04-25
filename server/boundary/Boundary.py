@@ -185,12 +185,14 @@ class Boundary:
             try:
                 data = await self._receive_csv_batch(sock, proto)
                 if data == EOF_MARKER:
+                    data_with_metadata = self._addMetaData(data, client_id)
                     logging.info(f"EOF received from client {addr[0]}:{addr[1]}")
-                    await self._send_data_to_rabbitmq_queue(data, BUDGET_QUEUE)
+                    await self._send_data_to_rabbitmq_queue(data_with_metadata, BUDGET_QUEUE)
                     break
                 filtered_data = self.project_to_columns(data)
-                await self._send_data_to_rabbitmq_queue(filtered_data, BUDGET_QUEUE)
                 data_with_metadata = self._addMetaData(filtered_data, client_id)
+                await self._send_data_to_rabbitmq_queue(data_with_metadata, BUDGET_QUEUE)
+                
                 await self._send_data_to_rabbitmq_queue(data_with_metadata, self._queue_name)
             except ConnectionError:
                 logging.info(f"Client {addr[0]}:{addr[1]} disconnected")
