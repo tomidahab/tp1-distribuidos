@@ -140,8 +140,12 @@ class Worker:
             client_id = deserialized_message.get("clientId")
             data = deserialized_message.get("data")
             query_type = deserialized_message.get("query")
-            
-            logging.info(f"Received message with query type: {query_type}, client ID: {client_id}")
+            eof_marker = deserialized_message.get("EOF_MARKER")
+            if eof_marker:
+                logging.info(f"\033[93mReceived EOF marker for clientId '{client_id}'\033[0m")
+                await self.send_eq_one_country(client_id, data, self.producer_queue_names[0], True)
+                await message.ack()
+                return
             
             if not data:
                 logging.warning(f"Received message with no data, client ID: {client_id}")
@@ -151,14 +155,14 @@ class Worker:
             if query_type == QUERY_EQ_YEAR:
                 data_eq_one_country, data_response_queue = self._filter_data(data)
                 if data_eq_one_country:
-                    await self.send_eq_one_country(client_id, data_eq_one_country)
+                    await self.send_eq_one_country(client_id, data_eq_one_country, self.producer_queue_names[0])
                 if data_response_queue:
-                    await self.send_response_queue(client_id, data_response_queue)
+                    await self.send_response_queue(client_id, data_response_queue, self.producer_queue_names[1])
                     
             elif query_type == QUERY_GT_YEAR:
                 data_eq_one_country, _ = self._filter_data(data)
                 if data_eq_one_country:
-                    await self.send_eq_one_country(client_id, data_eq_one_country)
+                    await self.send_eq_one_country(client_id, data_eq_one_country, self.producer_queue_names[0])
                     
             else:
                 logging.warning(f"Unknown query type: {query_type}, client ID: {client_id}")
@@ -171,38 +175,35 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_eq_one_country(self, client_id, data):
+    async def send_eq_one_country(self, client_id, data, queue_name=EQ_ONE_COUNTRY_QUEUE_NAME, eof_marker=False):
         """Send data to the eq_one_country queue in our exchange"""
-        message = self._add_metadata(client_id, data)
+        message = self._add_metadata(client_id, data, eof_marker)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
-            routing_key=EQ_ONE_COUNTRY_QUEUE_NAME,
+            routing_key=queue_name,
             message=Serializer.serialize(message),
             persistent=True
         )
-        if success:
-            logging.info(f"Sent {len(data)} records to eq_one_country queue")
-        else:
+        if not success:
             logging.error(f"Failed to send data to eq_one_country queue")
 
-    async def send_response_queue(self, client_id, data):
+    async def send_response_queue(self, client_id, data, queue_name=RESPONSE_QUEUE):
         """Send data to the response queue in our exchange"""
         message = self._add_metadata(client_id, data)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
-            routing_key=RESPONSE_QUEUE,
+            routing_key=queue_name,
             message=Serializer.serialize(message),
             persistent=True
         )
-        if success:
-            logging.info(f"Sent {len(data)} records to response queue")
-        else:
+        if not success:
             logging.error(f"Failed to send data to response queue")
 
-    def _add_metadata(self, client_id, data):
+    def _add_metadata(self, client_id, data, eof_marker=False):
         """Add metadata to the message"""
         message = {        
             "clientId": client_id,
+            "EOF_MARKER": eof_marker,
             "data": data
         }
         return message
