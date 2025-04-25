@@ -103,10 +103,17 @@ class RouterWorker:
             # Extract the necessary information from the message
             client_id = deserialized_message.get("clientId")
             data = deserialized_message.get("data")
-            query = deserialized_message.get("query")  # Include query if it exists
+            eof_marker = deserialized_message.get("EOF_MARKER")
+            query = deserialized_message.get("query")
             
-            if not client_id or not data:
-                logging.warning("Received message with missing clientId or data")
+
+            if not client_id:
+                logging.warning("Received message with missing clientId")
+                await message.ack()
+                return
+
+            if eof_marker:
+                await self._send_eof_to_all_queues(client_id)
                 await message.ack()
                 return
                 
@@ -120,11 +127,12 @@ class RouterWorker:
             # Prepare message to publish - maintain the query field if present
             outgoing_message = {
                 "clientId": client_id,
-                "data": data
+                "data": data,
+                "EOF_MARKER": eof_marker
             }
-            
             if query:
                 outgoing_message["query"] = query
+            
             
             # Publish the message to the selected queue
             success = await self.rabbit_client.publish(
@@ -135,7 +143,6 @@ class RouterWorker:
             )
             
             if success:
-                logging.info(f"Message forwarded to queue: {target_queue}")
                 await message.ack()
             else:
                 logging.error(f"Failed to forward message to queue: {target_queue}")
@@ -189,3 +196,22 @@ class RouterWorker:
         # Close RabbitMQ connection - create a task since this is called from a signal handler
         if hasattr(self, 'rabbit_client'):
             asyncio.create_task(self.rabbit_client.close())
+
+    async def _send_eof_to_all_queues(self, client_id):
+        """Send EOF marker to all output queues for a specific client ID"""
+        eof_message = {
+            "clientId": client_id,
+            "data": None,
+            "EOF_MARKER": True
+        }
+        for queue in self.output_queues:
+            success = await self.rabbit_client.publish(
+                exchange_name=self.exchange_name,
+                routing_key=queue,
+                message=Serializer.serialize(eof_message),
+                persistent=True
+            )
+            if not success:
+                logging.error(f"Failed to send EOF marker to queue {queue} for client {client_id}")
+        
+        logging.info(f"\033[91mReceived EOF_MARKER for client {client_id}. Sent to all queues successfully\033[0m")
