@@ -6,15 +6,16 @@ import uuid
 from Protocol import Protocol
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 import csv
+import json
 from io import StringIO
 from common.Serializer import Serializer
-import json
 
 #TODO move this to a common config file or common env var since worker has this too
 BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
-COLUMNS = {'genres': 3, 'imdb_id':6, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
+COLUMNS = {'budget':2,'genres': 3, 'imdb_id':6, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
 EOF_MARKER = "EOF_MARKER"
 RESPONSE_QUEUE = "response_queue"
+BUDGET_QUEUE = "countries_budget_workers"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -184,11 +185,15 @@ class Boundary:
             try:
                 data = await self._receive_csv_batch(sock, proto)
                 if data == EOF_MARKER:
+                    data_with_metadata = self._addMetaData(data, client_id)
                     logging.info(f"EOF received from client {addr[0]}:{addr[1]}")
+                    await self._send_data_to_rabbitmq_queue(data_with_metadata, BUDGET_QUEUE)
                     break
                 filtered_data = self.project_to_columns(data)
-                prepared_data = self._addMetaData(filtered_data, client_id)
-                await self._send_data_to_rabbitmq_queue(prepared_data)
+                data_with_metadata = self._addMetaData(filtered_data, client_id)
+                await self._send_data_to_rabbitmq_queue(data_with_metadata, BUDGET_QUEUE)
+                
+                await self._send_data_to_rabbitmq_queue(data_with_metadata, self._queue_name)
             except ConnectionError:
                 logging.info(f"Client {addr[0]}:{addr[1]} disconnected")
                 break
@@ -269,16 +274,15 @@ class Boundary:
     
 
   
-  async def _send_data_to_rabbitmq_queue(self, data):
+  async def _send_data_to_rabbitmq_queue(self, data, queue):
     """
     Send the data to RabbitMQ queue after serializing it
     """
     try:
         # Serialize the data to binary
         serialized_data = Serializer.serialize(data)
-        
         success = await self.rabbitmq.publish_to_queue(
-            queue_name=self._queue_name,
+            queue_name=queue,
             message=serialized_data,
             persistent=True
         )
