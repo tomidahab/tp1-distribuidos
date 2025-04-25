@@ -170,10 +170,8 @@ class Worker:
             message=Serializer.serialize(message),
             persistent=True
         )
-        # if success:
-        #     logging.info(f"Sent {len(data)} records with query type '{query_type}' to router queue")
-        # else:
-        #     logging.error(f"Failed to send data with query type '{query_type}' to router queue")
+        if not success:
+            logging.error(f"Failed to send data with query type '{query_type}' to router queue")
 
     def _add_metadata(self, client_id, data, query_type, eof_marker):
         """Add metadata including query type to the message"""
