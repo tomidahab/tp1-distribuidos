@@ -203,3 +203,27 @@ services:
       - ./server/router:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
+
+# ===================================================================================
+# ------------------------------------ Q5 -------------------------------------------
+# ===================================================================================
+  sentiment_analysis_worker:
+    build:
+      context: ./server
+      dockerfile: worker/sentiment_analysis/Dockerfile
+    env_file:
+      - ./server/worker/sentiment_analysis/.env
+    environment:
+      - ROUTER_CONSUME_QUEUE=sentiment_analysis_workers
+      - RESPONSE_QUEUE=response_queue
+    depends_on:
+      - rabbitmq
+      - boundary_movies_router
+    volumes:
+      - ./server/worker/sentiment_analysis:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+    deploy:
+      resources:
+        limits:
+          memory: 4G
