@@ -11,9 +11,29 @@ class Protocol:
             buffer.extend(chunk)
         return bytes(buffer)
 
-    async def send_all(self, sock, data):
-        length_bytes, data_bytes = self._encode_data(data)
+    async def send_all(self, sock, data, query):
+        """
+        Send data with query type indicator
+        First sends 4 bytes with the length (including query type byte),
+        then sends 1 byte for query type, then the actual data
+        """
+        # Get data bytes
+        data_bytes = data.encode('utf-8') if isinstance(data, str) else data
+        
+        # Get query type byte
+        query_byte = query.encode('utf-8')[0:1]  # Just take the first byte
+        
+        # Calculate total length (data + query byte)
+        total_length = len(data_bytes) + 1
+        length_bytes = total_length.to_bytes(4, byteorder='big')
+        
+        # Send length bytes
         await self._send_all(sock, length_bytes)
+        
+        # Send query type byte
+        await self._send_all(sock, query_byte)
+        
+        # Send data bytes
         await self._send_all(sock, data_bytes)
 
     async def _send_all(self, sock, data):

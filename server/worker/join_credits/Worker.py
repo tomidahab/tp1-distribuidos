@@ -26,9 +26,6 @@ ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_data_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
 
-# Maximum number of EOF markers to process before switching queues
-MAX_EOF_MARKERS = int(os.getenv("MAX_EOF_MARKERS", 2))
-
 class Worker:
     def __init__(self, 
                  consumer_queue_names=[MOVIES_ROUTER_CONSUME_QUEUE, CREDITS_ROUTER_CONSUME_QUEUE], 
@@ -50,9 +47,6 @@ class Worker:
         
         # Data store for processing
         self.collected_data = {}
-        
-        # number of EOF markers received
-        self.eof_markers = 0
 
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -153,59 +147,60 @@ class Worker:
     
     async def _switch_to_next_queue(self):
         """Switch to the next queue in the list"""
-        # Pause current queue
-        current_queue = self.consumer_queue_names[self.current_queue_index]
-        logging.info(f"Pausing consumption from queue: {current_queue}")
-        
-        # Mark current queue as paused
-        self.paused_queues.add(current_queue)
-        
-        # Cancel the consumer for the current queue to stop consuming
-        await self.rabbitmq.cancel_consumer(current_queue)
-        
-        if current_queue in self.consumers:
-            del self.consumers[current_queue]
-        
-        # Update index to next queue with wrap-around
-        self.current_queue_index = (self.current_queue_index + 1) % len(self.consumer_queue_names)
-        next_queue = self.consumer_queue_names[self.current_queue_index]
-        
-        logging.info(f"Switching to queue: {next_queue}")
-        
-        # Start consuming from the next queue
-        await self._start_consuming_from_current_queue()
+        try:    
+            # Pause current queue
+            current_queue = self.consumer_queue_names[self.current_queue_index]
+            logging.info(f"Pausing consumption from queue: {current_queue}")
+            
+            # Mark current queue as paused
+            self.paused_queues.add(current_queue)
+            
+            # Cancel the consumer for the current queue to stop consuming
+            await self.rabbitmq.cancel_consumer(current_queue)
+            
+            if current_queue in self.consumers:
+                del self.consumers[current_queue]
+            
+            # Update index to next queue with wrap-around
+            self.current_queue_index = (self.current_queue_index + 1) % len(self.consumer_queue_names)
+            next_queue = self.consumer_queue_names[self.current_queue_index]
+            
+            logging.info(f"Switching to queue: {next_queue}")
+            
+            # Start consuming from the next queue
+            await self._start_consuming_from_current_queue()
+        except Exception as e:
+            logging.error(f"Error switching to next queue: {e}")
+            raise e
     
     async def _process_message(self, message):
         """Process a message from the queue"""
         try:
             deserialized_message = Serializer.deserialize(message.body)
-            
-            # Extract clientId and data from the deserialized message
-            client_id = deserialized_message.get("clientId")
+            # Extract client_id and data from the deserialized message
+            client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER")
-            if eof_marker:
-                self.eof_markers += 1
             # Check if this is an EOF marker message
-            if self.eof_markers == MAX_EOF_MARKERS:
-                logging.info(f"Received EOF marker for client {client_id}. Switching to next queue.")
-                self.eof_markers = 0  # Reset EOF markers count
+            if eof_marker:
+                logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}' for current_queue_index {self.current_queue_index}\033[0m")
                 if self.current_queue_index == 1  and client_id in self.collected_data:
+                    logging.info(f"\033[92mJoined data for client {client_id} with EOF marker\033[0m")
+                    await self.send_data(client_id, data, True)
                     del self.collected_data[client_id]
-                    await self.send_data(client_id, data)
 
                 await message.ack()
                 await self._switch_to_next_queue()  # Switch to next queue
                 return
             
-            # Process the message data
             if data:
                 # If this is the first queue, store data for later join
                 if self.current_queue_index == 0:
                     # Save data indexed by client_id (assuming it can process multiple clients)
                     if client_id not in self.collected_data:
                         self.collected_data[client_id] = {}
-                    self.collected_data[client_id][MOVIES_KEY] = data
+                        self.collected_data[client_id][MOVIES_KEY] = []
+                    self.collected_data[client_id][MOVIES_KEY].extend(data)
                     
                 # If this is the second queue, join with stored data and send result
                 elif self.current_queue_index == 1 and client_id in self.collected_data:
@@ -234,52 +229,48 @@ class Worker:
         This is a simplified implementation - replace with your actual join logic
         """
         try:
-            # Sample join logic - replace with your actual implementation
             if not movies_data or not credits_data:
                 return []
                 
             # Create a dict to efficiently look up credits by movie ID
-            credits_dict = {}
+            actors_count = {}
             for credits in credits_data:
                 movie_id = credits.get("movie_id")
-                if movie_id:
-                    credits_dict[movie_id] = credits
+                if movie_id in movies_data:
+                    for actor in credits.get("cast"):
+                        actors_count[actor] = actors_count.get(actor, 0) + 1
             
-            # Join movies with their credits
-            joined_data = []
-            for movie in movies_data:
-                movie_id = movie.get("id")
-                if movie_id and movie_id in credits_dict:
-                    # Create a new object with combined data
-                    joined_movie = {**movie, **credits_dict[movie_id]}
-                    joined_data.append(joined_movie)
-            
-            logging.info(f"Joined {len(joined_data)} movies with credits")
-            return joined_data
+            return actors_count
             
         except Exception as e:
             logging.error(f"Error joining data: {e}")
             return []
 
-    async def send_data(self, client_id, data):
+    async def send_data(self, client_id, data, eof_marker=False):
         """Send processed data to the output queue"""
-        message = self._add_metadata(client_id, data)
-        success = await self.rabbitmq.publish(
-            exchange_name=self.exchange_name_producer,
-            routing_key=self.producer_queue_name,
-            message=Serializer.serialize(message),
-            persistent=True
-        )
-        if success:
-            logging.info(f"Sent {len(data) if isinstance(data, list) else 1} joined records to output queue for client {client_id}")
-        else:
-            logging.error(f"Failed to send joined data to output queue for client {client_id}")
+        try:    
+            message = self._add_metadata(client_id, data, eof_marker)
+            success = await self.rabbitmq.publish(
+                exchange_name=self.exchange_name_producer,
+                routing_key=self.producer_queue_name,
+                message=Serializer.serialize(message),
+                persistent=True
+            )
+            # if success:
+            #     logging.info(f"Sent {len(data) if isinstance(data, list) else 1} joined records to output queue for client {client_id}")
+            # else:
+            #     logging.error(f"Failed to send joined data to output queue for client {client_id}")
+        except Exception as e:
+            logging.error(f"Error sending data to output queue: {e}")
+            raise e
 
-    def _add_metadata(self, client_id, data):
+    def _add_metadata(self, client_id, data, eof_marker, query=None):
         """Prepare the message to be sent to the output queue"""
         message = {        
-            "clientId": client_id,
-            "data": data
+            "client_id": client_id,
+            "data": data,
+            "EOF_MARKER": eof_marker,
+            "query": query,
         }
         return message
         

@@ -17,12 +17,13 @@ async def main():
     load_dotenv()
     
     # Get configuration from environment variables
-    movies_consumer_queue = os.getenv("ROUTER_CONSUME_QUEUE_MOVIES")
-    credits_consumer_queue = os.getenv("ROUTER_CONSUME_QUEUE_CREDITS")
-    producer_queue = os.getenv("ROUTER_PRODUCER_QUEUE")
-    producer_exchange = os.getenv("PRODUCER_EXCHANGE", "filtered_data_exchange")
-    producer_exchange_type = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
+    consumer_queue = os.getenv("ROUTER_CONSUME_QUEUE")
+    response_queue = os.getenv("RESPONSE_QUEUE")
     
+    if not consumer_queue or not response_queue:
+        logging.error("Environment variables for queues are not set properly.")
+        return
+
     # Add retry logic for service initialization
     retry_count = 0
     
@@ -30,10 +31,8 @@ async def main():
         try:
             # Create worker with the environment configuration
             worker = Worker(
-                consumer_queue_names=[movies_consumer_queue, credits_consumer_queue],
-                producer_queue_name=producer_queue,
-                exchange_name_producer=producer_exchange,
-                exchange_type_producer=producer_exchange_type
+                consumer_queue_name=consumer_queue,
+                producer_queue_name=[response_queue],
             )
             
             success = await worker.run()
@@ -54,5 +53,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    logging.info("Starting join_credits worker service...")
+    logging.info("Starting filter_by_country worker service...")
     asyncio.run(main())
