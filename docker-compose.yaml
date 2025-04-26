@@ -46,7 +46,7 @@ services:
     environment:
       - NUMBER_OF_PRODUCER_WORKERS=1
       - INPUT_QUEUE=boundary_movies_router
-      - OUTPUT_QUEUES=filter_by_year_worker_1,filter_by_year_worker_2
+      - OUTPUT_QUEUES=filter_by_year_worker_1,filter_by_year_worker_2,sentiment_analysis_worker
       - BALANCER_TYPE=round_robin
     depends_on:
       - rabbitmq
@@ -277,8 +277,8 @@ services:
     env_file:
       - ./server/worker/sentiment_analysis/.env
     environment:
-      - ROUTER_CONSUME_QUEUE=sentiment_analysis_workers
-      - RESPONSE_QUEUE=response_queue
+      - ROUTER_CONSUME_QUEUE=sentiment_analysis_worker
+      - RESPONSE_QUEUE=average_sentiment_router
     depends_on:
       - rabbitmq
     volumes:
@@ -290,7 +290,7 @@ services:
         limits:
           memory: 4G
 
-  reviews_router:
+  average_sentiment_router:
     build:
       context: ./server
       dockerfile: router/Dockerfile
@@ -298,8 +298,8 @@ services:
       - ./server/router/.env
     environment:
       - NUMBER_OF_PRODUCER_WORKERS=1
-      - INPUT_QUEUE=boundary_movies_router
-      - OUTPUT_QUEUES=sentiment_analysis_workers
+      - INPUT_QUEUE=average_sentiment_router
+      - OUTPUT_QUEUES=average_sentiment_worker
       - BALANCER_TYPE=round_robin
     depends_on:
       - rabbitmq
