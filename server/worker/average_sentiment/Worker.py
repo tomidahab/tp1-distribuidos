@@ -84,18 +84,54 @@ class Worker:
         try:
             deserialized_message = Serializer.deserialize(message.body)
             
-            # Extract clientId and data from the deserialized message
+            # Extract client_id and data from the deserialized message
             client_id = deserialized_message.get("clientId")
             data = deserialized_message.get("data", [])
             eof_marker = deserialized_message.get("EOF_MARKER", False)
             
+            # Initialize or retrieve running sums and counts from class attributes
+            if not hasattr(self, 'sentiment_totals'):
+                self.sentiment_totals = {
+                    "POSITIVE": {"sum": 0, "count": 0},
+                    "NEGATIVE": {"sum": 0, "count": 0}
+                }
+            
             if eof_marker:
-                logging.info(f"Received EOF marker for clientId '{client_id}'")
-                # Pass through EOF marker to response queue
+                logging.info(f"Received EOF marker for client_id '{client_id}'")
+                
+                # Calculate final averages
+                positive_avg = 0
+                if self.sentiment_totals["POSITIVE"]["count"] > 0:
+                    positive_avg = self.sentiment_totals["POSITIVE"]["sum"] / self.sentiment_totals["POSITIVE"]["count"]
+                    
+                negative_avg = 0
+                if self.sentiment_totals["NEGATIVE"]["count"] > 0:
+                    negative_avg = self.sentiment_totals["NEGATIVE"]["sum"] / self.sentiment_totals["NEGATIVE"]["count"]
+                
+                # Prepare detailed results
+                positive_count = self.sentiment_totals["POSITIVE"]["count"]
+                negative_count = self.sentiment_totals["NEGATIVE"]["count"]
+                
+                # Create the final response with the average results
+                result = [{
+                    "sentiment": "POSITIVE",
+                    "average_ratio": positive_avg,
+                    "movie_count": positive_count
+                }, {
+                    "sentiment": "NEGATIVE", 
+                    "average_ratio": negative_avg,
+                    "movie_count": negative_count
+                }]
+                
+                logging.info(f"===== FINAL SENTIMENT ANALYSIS RESULTS =====")
+                logging.info(f"Positive movies: {positive_count}, Average ratio: {positive_avg:.4f}")
+                logging.info(f"Negative movies: {negative_count}, Average ratio: {negative_avg:.4f}")
+                
+                # Pass the summary to response queue
                 response_message = {
                     "clientId": client_id,
                     "query": "Q5",
-                    "data": [],
+                    "data": result,
                     "EOF_MARKER": True
                 }
                 
@@ -105,47 +141,48 @@ class Worker:
                     persistent=True
                 )
                 
+                # Reset the accumulators for the next client
+                self.sentiment_totals = {
+                    "POSITIVE": {"sum": 0, "count": 0},
+                    "NEGATIVE": {"sum": 0, "count": 0}
+                }
+                
                 await message.ack()
                 return
             
-            # Process the sentiment data - for now, just log it
+            # Process the sentiment data 
             if data:
-                logging.info("==== RECEIVED DATA FROM SENTIMENT ANALYSIS ====")
-                logging.info(f"Client ID: {client_id}")
-                logging.info(f"Total records: {len(data)}")
+                logging.info(f"Received batch with {len(data)} movies for sentiment analysis from client '{client_id}'")
                 
-                # Log the first record to see its structure
-                if len(data) > 0:
-                    logging.info(f"First record sample: {data[0]}")
+                # Process each movie in the batch
+                for movie in data:
+                    sentiment = movie.get('sentiment')
+                    ratio = movie.get('ratio')
+                    
+                    if sentiment in self.sentiment_totals:
+                        # Add to the running total
+                        self.sentiment_totals[sentiment]["sum"] += ratio
+                        self.sentiment_totals[sentiment]["count"] += 1
                 
-                # Log a few more records if available
-                if len(data) > 1:
-                    logging.info(f"Second record sample: {data[1]}")
+                # Log current state
+                positive_count = self.sentiment_totals["POSITIVE"]["count"]
+                negative_count = self.sentiment_totals["NEGATIVE"]["count"]
                 
-                # Prepare response message - just pass through the data for now
-                response_message = {
-                    "clientId": client_id,
-                    "query": "Q5",
-                    "data": data  # Just pass through the data as-is
-                }
+                if positive_count > 0:
+                    positive_current_avg = self.sentiment_totals["POSITIVE"]["sum"] / positive_count
+                    logging.info(f"Running totals - Positive: {positive_count} movies, avg ratio: {positive_current_avg:.4f}")
                 
-                # Send processed data to response queue
-                success = await self.rabbitmq.publish_to_queue(
-                    queue_name=self.response_queue_name,
-                    message=Serializer.serialize(response_message),
-                    persistent=True
-                )
+                if negative_count > 0:
+                    negative_current_avg = self.sentiment_totals["NEGATIVE"]["sum"] / negative_count
+                    logging.info(f"Running totals - Negative: {negative_count} movies, avg ratio: {negative_current_avg:.4f}")
                 
-                if success:
-                    logging.info(f"Sent {len(data)} movies directly to response queue for debugging")
-                else:
-                    logging.error("Failed to send data to response queue")
+                # Acknowledge message
+                await message.ack()
+                
             else:
                 logging.warning(f"Received empty data from client {client_id}")
-            
-            # Acknowledge message
-            await message.ack()
-            
+                await message.ack()
+                
         except Exception as e:
             logging.error(f"Error processing message: {e}")
             await message.reject(requeue=False)

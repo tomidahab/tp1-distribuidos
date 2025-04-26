@@ -199,7 +199,6 @@ class Boundary:
                     
                     # Send data for Q5 to the reviews router
                     prepared_data_q5 = self._addMetaData(client_id, filtered_data_q5)
-                    logging.info(f"Sending {len(filtered_data_q5)} records for sentiment analysis (Q5) with client_id {client_id}")
                     #TODO change it so instead of sending to the sentiment analysis worker, it sends to the movies router
                     # and the router sends it to the respective worker based on the query in the metadata
                     await self._send_data_to_rabbitmq_queue(prepared_data_q5, "sentiment_analysis_worker")

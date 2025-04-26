@@ -196,8 +196,8 @@ class SentimentWorker:
                     # Create processed movie record
                     processed_movie = {
                         "Movie": original_title,
-                        "feeling": sentiment_label,
-                        "Average": ratio,
+                        "sentiment": sentiment_label,
+                        "ratio": ratio,
                         "confidence": confidence
                     }
                     
