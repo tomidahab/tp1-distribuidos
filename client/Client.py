@@ -143,20 +143,10 @@ class Client:
                         # Process movies based on query
                         if query == QUERY_1:
                             parsed_data = self._format_data_query_1(parsed_data)
-                            processed_movies = []
-                            for movie in parsed_data:
-                                genres_str = ", ".join(movie.get("Genres", [])) or "No genres"
-                                
-                                movie_record = {
-                                    "title": movie.get("Movie", "Unknown"),
-                                    "genres": genres_str,
-                                    "year": movie.get("Year", "Unknown"),
-                                    "rating": movie.get("Rating", "Unknown")
-                                }
-                                processed_movies.append(movie_record)
-                            self._write_to_file(self.output_file_q1, processed_movies)
+                            self._write_to_file(self.output_file_q1, parsed_data)
                         elif query == QUERY_4:
-                            self._write_to_file(self.output_file_q4, [parsed_data])
+                            parsed_data = self._format_data_query_4(parsed_data)
+                            self._write_to_file(self.output_file_q4, parsed_data)
                        
                     except json.JSONDecodeError as e:
                         logging.error(f"Failed to parse response as JSON: {e}")
@@ -184,6 +174,16 @@ class Client:
             logging.error(f"Error writing to file {file_path}: {e}")
         except Exception as e:
             logging.error(f"Unexpected error writing to file {file_path}: {e}")
+
+    def _format_data_query_4(self, data):
+        """
+        Format data for Query 4
+        """
+        # Transform the data into a more user-friendly format
+        formatted_data = []
+        for actor in data:
+            formatted_data.append({actor.get('name', 'Unknown'): actor.get('count', 0) })
+        return formatted_data
 
     def _format_data_query_1(self, data):
         """
