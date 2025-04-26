@@ -77,10 +77,6 @@ services:
 
 # ---------------- END OF BOUNDARY ROUTERS ----------------
 
-
-
-
-
     
   join_credits_worker_1:
     build:
@@ -91,7 +87,7 @@ services:
     environment:
       - ROUTER_CONSUME_QUEUE_MOVIES=join_credits_worker_1_movies
       - ROUTER_CONSUME_QUEUE_CREDITS=join_credits_worker_1_credits
-      - ROUTER_PRODUCER_QUEUE=TODO_ROUTER_COUNT
+      - ROUTER_PRODUCER_QUEUE=count_router
     depends_on:
       - rabbitmq
     volumes:
@@ -199,5 +195,74 @@ services:
       - rabbitmq
     volumes:
       - ./server/router:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+
+
+  count_router:
+    build:
+      context: ./server
+      dockerfile: router/Dockerfile
+    env_file:
+      - ./server/router/.env
+    environment:
+      - NUMBER_OF_PRODUCER_WORKERS=1
+      - INPUT_QUEUE=count_router
+      - OUTPUT_QUEUES=count_worker_1
+      - BALANCER_TYPE=round_robin
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/router:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+
+
+  count_worker_1:
+    build:
+      context: ./server
+      dockerfile: worker/count/Dockerfile
+    env_file:
+      - ./server/worker/count/.env
+    environment:
+      - ROUTER_CONSUME_QUEUE=count_worker_1
+      - ROUTER_PRODUCER_QUEUE=top_router
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/worker/count:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+
+  top_router:
+    build:
+      context: ./server
+      dockerfile: router/Dockerfile
+    env_file:
+      - ./server/router/.env
+    environment:
+      - NUMBER_OF_PRODUCER_WORKERS=1
+      - INPUT_QUEUE=top_router
+      - OUTPUT_QUEUES=top_worker_1
+      - BALANCER_TYPE=round_robin
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/router:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+
+  top_worker_1:
+    build:
+      context: ./server
+      dockerfile: worker/top/Dockerfile
+    env_file:
+      - ./server/worker/top/.env
+    environment:
+      - ROUTER_CONSUME_QUEUE=top_worker_1
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/worker/top:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
