@@ -21,8 +21,9 @@ CREDITS_ROUTER_QUEUE = os.getenv("CREDITS_ROUTER_QUEUE")
 RATINGS_ROUTER_QUEUE = os.getenv("RATINGS_ROUTER_QUEUE")
 
 COLUMNS_Q1 = {'genres': 3, 'id':5, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
+COLUMNS_Q2 = {"budget": 2, "id": 5, 'production_countries': 13}
 COLUMNS_Q4 = {"cast": 0, "movie_id": 2}
-COLUMNS_Q5 = {'budget': 2, 'imdb_id':6, 'original_title': 8, 'overview': 9, 'revenue': 15}
+COLUMNS_Q5 = {'budget': 2, 'id':5, 'original_title': 8, 'overview': 9, 'revenue': 15}
 EOF_MARKER = "EOF_MARKER"
 
 RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
@@ -132,9 +133,6 @@ class Boundary:
         data = deserialized_message.get("data")
         query = deserialized_message.get("query")
 
-        if query == "5":
-            logging.info(self.green(f"Received data for client {client_id} from sentiment analysis worker: {data}"))
-        
         if not data:
             logging.warning(f"Response message contains no data")
             await message.ack()
@@ -194,30 +192,35 @@ class Boundary:
 
                 # Process and route data based on CSV type
                 if csvs_received == MOVIES_CSV:
-                    filtered_data_q1, filtered_data_q5 = self._project_to_columns(data, [COLUMNS_Q1, COLUMNS_Q5])
+                    # Use tuple unpacking to get results for Q1, Q2, and Q5
+                    filtered_data_q1, filtered_data_q2, filtered_data_q5 = self._project_to_columns(data, [COLUMNS_Q1, COLUMNS_Q2, COLUMNS_Q5])
                     
                     # Send data for Q1 to the movies router
                     prepared_data_q1 = self._addMetaData(client_id, filtered_data_q1)
                     await self._send_data_to_rabbitmq_queue(prepared_data_q1, self.movies_router_queue)
                     
-                    # Send data for Q5 to the reviews router
-                    prepared_data_q5 = self._addMetaData(client_id, filtered_data_q5)
-                    #TODO change it so instead of sending to the sentiment analysis worker, it sends to the movies router
-                    # and the router sends it to the respective worker based on the query in the metadata
-                    await self._send_data_to_rabbitmq_queue(prepared_data_q5, "sentiment_analysis_worker")
+                    # Send data for Q2 to the filter_by_colaboration_worker
+                    prepared_data_q2 = self._addMetaData(client_id, filtered_data_q2)
+                    logging.info(f"Sending {len(filtered_data_q2)} records for Q2 (country budgets) with client_id {client_id}")
+                    await self._send_data_to_rabbitmq_queue(prepared_data_q2, "filter_by_colaboration_worker_1")
+
+                    # Send data for Q5 to the sentiment analysis worker
+                    # prepared_data_q5 = self._addMetaData(client_id, filtered_data_q5)
+                    # logging.info(f"Sending {len(filtered_data_q5)} records for sentiment analysis (Q5) with client_id {client_id}")
+                    # await self._send_data_to_rabbitmq_queue(prepared_data_q5, "sentiment_analysis_worker")
                 
-                elif csvs_received == CREDITS_CSV:
-                    # Process and send to credits router
-                    filtered_data = self._project_to_columns(data, COLUMNS_Q4)
-                    filtered_data = self._removed_cast_extra_data(filtered_data)
-                    prepared_data = self._addMetaData(client_id, filtered_data)
-                    await self._send_data_to_rabbitmq_queue(prepared_data, self.credits_router_queue)
+                # elif csvs_received == CREDITS_CSV:
+                #     # Process and send to credits router
+                #     filtered_data = self._project_to_columns(data, COLUMNS_Q4)
+                #     filtered_data = self._removed_cast_extra_data(filtered_data)
+                #     prepared_data = self._addMetaData(client_id, filtered_data)
+                #     await self._send_data_to_rabbitmq_queue(prepared_data, self.credits_router_queue)
                 
-                elif csvs_received == RATINGS_CSV:
-                    # Process and send to ratings router
-                    # For now, just forward the raw data - you can add specific processing later
-                    prepared_data = self._addMetaData(client_id, data)
-                    await self._send_data_to_rabbitmq_queue(prepared_data, self.ratings_router_queue)
+                # elif csvs_received == RATINGS_CSV:
+                #     # Process and send to ratings router
+                #     # For now, just forward the raw data - you can add specific processing later
+                #     prepared_data = self._addMetaData(client_id, data)
+                #     await self._send_data_to_rabbitmq_queue(prepared_data, self.ratings_router_queue)
                 
             except ConnectionError:
                 logging.info(f"Client {addr[0]}:{addr[1]} disconnected")
@@ -230,10 +233,16 @@ class Boundary:
   async def _send_eof_marker(self, csvs_received, client_id):
         prepared_data = self._addMetaData(client_id, None, True)
         if csvs_received == MOVIES_CSV:
+           # Send EOF marker to movies router for Q1
            await self._send_data_to_rabbitmq_queue(prepared_data, self.movies_router_queue)
-           #TODO: change it so instead of sending to the sentiment analysis worker, it sends to the movies router
-           # and the router sends it to the respective worker based on the query in the metadata
+           
+           # Send EOF marker to filter_by_colaboration_worker for Q2
+           logging.info(f"Sending EOF marker for Q2 (country budgets) to filter_by_colaboration_worker_1")
+           await self._send_data_to_rabbitmq_queue(prepared_data, "filter_by_colaboration_worker_1")
+           
+           # Send EOF marker to sentiment analysis worker for Q5
            await self._send_data_to_rabbitmq_queue(prepared_data, "sentiment_analysis_worker")
+           
         elif csvs_received == CREDITS_CSV:
             await self._send_data_to_rabbitmq_queue(prepared_data, self.credits_router_queue)
         elif csvs_received == RATINGS_CSV:

@@ -179,7 +179,58 @@ services:
       - ./server/common:/app/common
 
 # ===================================================================================
-# ------------------------------------ Q3 -------------------------------------------
+# ------------------------------------ Q2 -------------------------------------------
+# ===================================================================================
+  filter_by_colaboration_worker_1:
+    build:
+      context: ./server
+      dockerfile: worker/filter_by_colaboration/Dockerfile
+    env_file:
+      - ./server/worker/filter_by_colaboration/.env
+    environment:
+      - ROUTER_CONSUME_QUEUE=filter_by_colaboration_worker_1
+      - ROUTER_PRODUCER_QUEUE=top_5_budget_router
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/worker/filter_by_colaboration:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+
+  top_5_budget_router:
+    build:
+      context: ./server
+      dockerfile: router/Dockerfile
+    env_file:
+      - ./server/router/.env
+    environment:
+      - NUMBER_OF_PRODUCER_WORKERS=1
+      - INPUT_QUEUE=top_5_budget_router
+      - OUTPUT_QUEUES=top_5_budget_worker_1
+      - BALANCER_TYPE=round_robin
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/router:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+
+  top_5_budget_worker_1:
+    build:
+      context: ./server
+      dockerfile: worker/top_5_budget/Dockerfile
+    environment:
+    - ROUTER_CONSUME_QUEUE=top_5_budget_worker_1
+    # sends to response queue
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/worker/top_5_budget:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+
+# ===================================================================================
+# ------------------------------------ Q4 -------------------------------------------
 # ===================================================================================
 
   join_movies_credits_router:
