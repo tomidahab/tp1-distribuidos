@@ -152,6 +152,9 @@ class Worker:
                 else:
                     logging.info("Received a EOF")
                     await self.send_dic(client_id)
+                    await message.ack()
+                    return
+
                 """if data_eq_year:
                     await self.send_eq_year(data_eq_year)
                 if data_gt_year:

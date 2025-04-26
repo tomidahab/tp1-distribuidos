@@ -22,7 +22,7 @@ ISO_3166_1 = "iso_3166_1"
 NAME = "name"
 EOF_MARKER = "EOF_MARKER"
 RESPONSE_QUEUE = "response_queue"
-COUNTRIES_BUDGET_WORKERS = 1 #TODO move this into docker-compose
+COUNTRIES_BUDGET_WORKERS = 2 #TODO move this into docker-compose
 
 class Worker:
     def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[CONSUMER_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[RES_QUEUE]):

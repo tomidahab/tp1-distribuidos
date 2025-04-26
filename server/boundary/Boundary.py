@@ -15,6 +15,7 @@ BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
 COLUMNS = {'budget':2,'genres': 3, 'imdb_id':6, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
 EOF_MARKER = "EOF_MARKER"
 RESPONSE_QUEUE = "response_queue"
+COUNTRIES_BUDGET_WORKERS = 2
 BUDGET_QUEUE = "countries_budget_workers"
 
 logging.basicConfig(
@@ -187,7 +188,8 @@ class Boundary:
                 if data == EOF_MARKER:
                     data_with_metadata = self._addMetaData(data, client_id)
                     logging.info(f"EOF received from client {addr[0]}:{addr[1]}")
-                    await self._send_data_to_rabbitmq_queue(data_with_metadata, BUDGET_QUEUE)
+                    for i in range(0,COUNTRIES_BUDGET_WORKERS):
+                      await self._send_data_to_rabbitmq_queue(data_with_metadata, BUDGET_QUEUE)
                     break
                 filtered_data = self.project_to_columns(data)
                 data_with_metadata = self._addMetaData(filtered_data, client_id)

@@ -74,3 +74,5 @@ services:
       - ./server/worker/countries_budget:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
+    deploy:
+      replicas: 2
