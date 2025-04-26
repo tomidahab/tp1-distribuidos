@@ -37,9 +37,6 @@ class Worker:
         self.producer_queue_name = producer_queue_name
         self.rabbitmq = RabbitMQClient()
         
-        # Dictionary to accumulate budget by country for single-country productions
-        self.countries_budget = {}
-        
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
         signal.signal(signal.SIGTERM, self._handle_shutdown)
@@ -103,19 +100,38 @@ class Worker:
             # Extract client_id and data from the deserialized message
             client_id = deserialized_message.get("clientId", deserialized_message.get("client_id"))
             data = deserialized_message.get("data", [])
-            eof_marker = deserialized_message.get("EOF_MARKER", False)
+            eof_marker = deserialized_message.get("EOF_MARKER")
             
             if eof_marker:
                 logging.info(f"Received EOF marker for client '{client_id}'")
-                # Send accumulated budgets by country to the next worker
-                await self._send_country_budgets(client_id)
+                # Forward the EOF marker to the next worker
+                message_to_send = self._add_metadata(client_id, [], True)
+                await self.rabbitmq.publish_to_queue(
+                    queue_name=self.producer_queue_name,
+                    message=Serializer.serialize(message_to_send),
+                    persistent=True
+                )
+                logging.info(f"Forwarded EOF marker to '{self.producer_queue_name}'")
                 await message.ack()
                 return
             
-            # Process the movie data
+            # Process the movie data immediately and send to the next worker
             if data:
                 logging.info(f"Processing {len(data)} movies for client '{client_id}'")
-                self._filter_single_country_movies(data)
+                # Filter and get single country movies in this batch
+                filtered_movies = self._filter_single_country_movies(data)
+                if filtered_movies:
+                    # Send filtered movies immediately
+                    message_to_send = self._add_metadata(client_id, filtered_movies, False)
+                    success = await self.rabbitmq.publish_to_queue(
+                        queue_name=self.producer_queue_name,
+                        message=Serializer.serialize(message_to_send),
+                        persistent=True
+                    )
+                    if success:
+                        logging.info(f"Sent {len(filtered_movies)} filtered movies to '{self.producer_queue_name}'")
+                    else:
+                        logging.error(f"Failed to send filtered movies to '{self.producer_queue_name}'")
             else:
                 logging.warning(f"Received empty data from client {client_id}")
             
@@ -128,10 +144,12 @@ class Worker:
 
     def _filter_single_country_movies(self, data):
         """
-        Filter movies with only one production country and 
-        accumulate their budget by country
+        Filter movies with only one production country and return them
+        with budget information
         """
+        filtered_movies = []
         processed = 0
+        
         for movie in data:
             # Get production countries
             countries = movie.get(PRODUCTION_COUNTRIES)
@@ -164,41 +182,19 @@ class Worker:
                     try:
                         budget_value = int(float(budget))
                         if budget_value > 0:
-                            # Add to country budget dictionary
-                            self.countries_budget[country_name] = self.countries_budget.get(country_name, 0) + budget_value
+                            # Add to filtered movies list
+                            filtered_movies.append({
+                                "country": country_name,
+                                "budget": budget_value,
+                                "title": movie.get(ORIGINAL_TITLE, "Unknown")
+                            })
                             processed += 1
                     except (ValueError, TypeError):
                         logging.warning(f"Invalid budget value: {budget}")
                         continue
         
-        logging.info(f"Filtered {processed} single-country movies. Total countries tracked: {len(self.countries_budget)}")
-    
-    async def _send_country_budgets(self, client_id):
-        """Send the accumulated country budgets to the next worker"""
-        # Prepare the data - convert dictionary to list of objects
-        country_budget_list = [
-            {"country": country, "budget": budget}
-            for country, budget in self.countries_budget.items()
-        ]
-        
-        logging.info(f"Sending budget data for {len(country_budget_list)} countries to next worker")
-        
-        # Create message with metadata
-        message = self._add_metadata(client_id, country_budget_list, True)
-        
-        # Send to next worker directly to queue
-        success = await self.rabbitmq.publish_to_queue(
-            queue_name=self.producer_queue_name,
-            message=Serializer.serialize(message),
-            persistent=True
-        )
-        
-        if success:
-            logging.info(f"Successfully sent country budget data to '{self.producer_queue_name}'")
-            # Reset the dictionary for next client
-            self.countries_budget = {}
-        else:
-            logging.error(f"Failed to send country budget data to '{self.producer_queue_name}'")
+        logging.info(f"Filtered {processed} single-country movies from this batch")
+        return filtered_movies
     
     def _add_metadata(self, client_id, data, eof_marker=False):
         """Add metadata to the message"""
