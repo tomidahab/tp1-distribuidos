@@ -149,11 +149,13 @@ class Client:
                         elif query == QUERY_4:
                             parsed_data = self._format_data_query_4(parsed_data)
                             self._write_to_file(self.output_file_q4, parsed_data)
+                            logging.info(f"\033[94mReceived data for Query 4\033[0m")
                         elif query == QUERY_5:
                             #parse data if needed
                             # parsed_data = self._format_data_query_5(parsed_data) 
                             self._write_to_file(self.output_file_q5, parsed_data)
-                       
+                            logging.info(f"\033[94mReceived data for Query 5\033[0m")
+                            
                     except json.JSONDecodeError as e:
                         logging.error(f"Failed to parse response as JSON: {e}")
                         logging.info(f"Raw response: {response_data[:100]}...")
