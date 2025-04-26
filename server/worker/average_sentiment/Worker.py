@@ -17,7 +17,8 @@ logging.basicConfig(
 
 # Constants and configuration
 ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE", "average_sentiment_worker")
-RESPONSE_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE", "response_queue")
+RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
+QUERY_5 = os.getenv("QUERY_5", "5")
 
 class Worker:
     def __init__(self, consumer_queue_name=ROUTER_CONSUME_QUEUE, response_queue_name=RESPONSE_QUEUE):
@@ -25,6 +26,12 @@ class Worker:
         self.consumer_queue_name = consumer_queue_name
         self.response_queue_name = response_queue_name
         self.rabbitmq = RabbitMQClient()
+        
+        # Initialize sentiment tracking attributes
+        self.sentiment_totals = {
+            "POSITIVE": {"sum": 0, "count": 0},
+            "NEGATIVE": {"sum": 0, "count": 0}
+        }
         
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -85,16 +92,13 @@ class Worker:
             deserialized_message = Serializer.deserialize(message.body)
             
             # Extract client_id and data from the deserialized message
-            client_id = deserialized_message.get("clientId")
+            client_id = deserialized_message.get("clientId", deserialized_message.get("client_id"))
             data = deserialized_message.get("data", [])
             eof_marker = deserialized_message.get("EOF_MARKER", False)
             
-            # Initialize or retrieve running sums and counts from class attributes
-            if not hasattr(self, 'sentiment_totals'):
-                self.sentiment_totals = {
-                    "POSITIVE": {"sum": 0, "count": 0},
-                    "NEGATIVE": {"sum": 0, "count": 0}
-                }
+            # Debug log to see full message
+            if len(data) > 0:
+                logging.info(f"Data keys in first record: {data[0].keys()}")
             
             if eof_marker:
                 logging.info(f"Received EOF marker for client_id '{client_id}'")
@@ -127,13 +131,8 @@ class Worker:
                 logging.info(f"Positive movies: {positive_count}, Average ratio: {positive_avg:.4f}")
                 logging.info(f"Negative movies: {negative_count}, Average ratio: {negative_avg:.4f}")
                 
-                # Pass the summary to response queue
-                response_message = {
-                    "clientId": client_id,
-                    "query": "Q5",
-                    "data": result,
-                    "EOF_MARKER": True
-                }
+                # Use the _add_metadata function to prepare the response
+                response_message = self._add_metadata(client_id, result, True, QUERY_5)
                 
                 await self.rabbitmq.publish_to_queue(
                     queue_name=self.response_queue_name,
@@ -154,10 +153,19 @@ class Worker:
             if data:
                 logging.info(f"Received batch with {len(data)} movies for sentiment analysis from client '{client_id}'")
                 
+                # Log sample data
+                if len(data) > 0:
+                    logging.info(f"Sample record: {data[0]}")
+                
                 # Process each movie in the batch
                 for movie in data:
+                    # Look for the sentiment field using multiple possible names
                     sentiment = movie.get('sentiment')
-                    ratio = movie.get('ratio')
+                    
+                    # Look for the ratio field using multiple possible names
+                    ratio = movie.get('ratio', movie.get('Average', 0))
+                    
+                    logging.debug(f"Processing movie: {movie.get('Movie', 'Unknown')}, sentiment: {sentiment}, ratio: {ratio}")
                     
                     if sentiment in self.sentiment_totals:
                         # Add to the running total
@@ -186,6 +194,16 @@ class Worker:
         except Exception as e:
             logging.error(f"Error processing message: {e}")
             await message.reject(requeue=False)
+    
+    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+        """Prepare the message to be sent to the output queue - standardized across workers"""
+        message = {        
+            "client_id": client_id,
+            "data": data,
+            "EOF_MARKER": eof_marker,
+            "query": query,
+        }
+        return message
     
     def _handle_shutdown(self, *_):
         logging.info(f"Shutting down average sentiment worker...")

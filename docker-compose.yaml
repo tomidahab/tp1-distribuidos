@@ -316,7 +316,6 @@ services:
       - ./server/worker/average_sentiment/.env
     environment:
       - ROUTER_CONSUME_QUEUE=average_sentiment_worker
-      - ROUTER_PRODUCER_QUEUE=response_queue
     depends_on:
       - rabbitmq
     volumes:

@@ -18,7 +18,7 @@ async def main():
     
     # Get configuration from environment variables
     consumer_queue = os.getenv("ROUTER_CONSUME_QUEUE", "average_sentiment_worker")
-    response_queue = os.getenv("ROUTER_PRODUCER_QUEUE", "response_queue")
+    response_queue = os.getenv("RESPONSE_QUEUE", "response_queue")
     
     # Add retry logic for service initialization
     retry_count = 0

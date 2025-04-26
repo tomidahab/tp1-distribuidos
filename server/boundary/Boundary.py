@@ -131,6 +131,9 @@ class Boundary:
         client_id = deserialized_message.get("client_id")
         data = deserialized_message.get("data")
         query = deserialized_message.get("query")
+
+        if query == "5":
+            logging.info(self.green(f"Received data for client {client_id} from sentiment analysis worker: {data}"))
         
         if not data:
             logging.warning(f"Response message contains no data")
