@@ -139,8 +139,6 @@ class Worker:
                 # If we have data for this client, send it to response queue
                 if client_id in self.client_data:
                     top_actors = self._get_top_actors(client_id)
-                    logging.info(f"Received EOF marker for client_id '{client_id}', sending top actors {top_actors}")
-
                     await self.send_response(client_id, top_actors, self.producer_queue_name[0], True, QUERY_4)
                     # Clean up client data after sending
                     del self.client_data[client_id]
@@ -151,7 +149,6 @@ class Worker:
             if data:
                 # Update actors counts for this client
                 self._update_actors_data(client_id, data)
-                logging.info(f"Updated actors data for client {client_id}")
             else:
                 logging.warning(f"Received message with no data for client {client_id}")
             
@@ -168,10 +165,7 @@ class Worker:
         """Update the actors count data for a specific client"""
         if not isinstance(data, dict):
             logging.warning(f"Expected dict data for client {client_id}, got {type(data)}")
-            return
-
-        logging.info(f"\033[93mReceived data: {data}\033[0m")
-        
+            return        
         
         # Calculate top n from this batch
         batch_top_n = self._calculate_top_n(data)
@@ -179,7 +173,6 @@ class Worker:
         # If client doesn't exist yet, just store this batch's top n
         if client_id not in self.client_data:
             self.client_data[client_id] = batch_top_n
-            logging.info(f"Created new top actors record for client {client_id} with {len(batch_top_n)} actors")
             return
         
         # Merge existing top n with new batch's top n
@@ -195,8 +188,6 @@ class Worker:
         
         self.client_data[client_id] = self._calculate_top_n(merged_data)
         
-        logging.info(f"Updated top actors for client {client_id}, now has {len(self.client_data[client_id])} actors")
-
     def _calculate_top_n(self, data):
         """Calculate top n actors from a dictionary of actor counts"""
         top_actors = heapq.nlargest(self.top_n, data.items(), key=lambda x: x[1])
@@ -227,9 +218,7 @@ class Worker:
             persistent=True
         )
         
-        if success:
-            logging.info(f"Sent {len(data) if isinstance(data, list) else 1} records to {queue_name} for client {client_id}")
-        else:
+        if not success:
             logging.error(f"Failed to send data to {queue_name} for client {client_id}")
 
     def _add_metadata(self, client_id, data, eof_marker=False, query=None):
