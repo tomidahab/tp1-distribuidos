@@ -320,6 +320,6 @@ services:
     depends_on:
       - rabbitmq
     volumes:
-      - ./server/worker/top:/app
+      - ./server/worker/average_sentiment:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
