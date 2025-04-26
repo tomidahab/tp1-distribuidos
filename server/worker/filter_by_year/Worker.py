@@ -139,8 +139,6 @@ class Worker:
             eof_marker = deserialized_message.get("EOF_MARKER")
 
             if eof_marker:
-                # logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}'\033[0m")
-                # await self.send_data(client_id, data, QUERY_EQ_YEAR, True)
                 await self.send_data(client_id, data, QUERY_GT_YEAR, True)
                 await message.ack()
                 return
@@ -161,9 +159,9 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_data(self, client_id, data, query_type, eof_marker=False):
+    async def send_data(self, client_id, data, query, eof_marker=False):
         """Send data to the router queue with query type in metadata"""
-        message = self._add_metadata(client_id, data, query_type, eof_marker)
+        message = self._add_metadata(client_id, data, eof_marker, query)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
             routing_key=self.producer_queue_name,
@@ -171,14 +169,14 @@ class Worker:
             persistent=True
         )
         if not success:
-            logging.error(f"Failed to send data with query type '{query_type}' to router queue")
+            logging.error(f"Failed to send data with query type '{query}' to router queue")
 
-    def _add_metadata(self, client_id, data, query_type, eof_marker):
+    def _add_metadata(self, client_id, data, eof_marker, query):
         """Add metadata including query type to the message"""
         message = {        
             "client_id": client_id,
             "data": data,
-            "query": query_type,
+            "query": query,
             "EOF_MARKER": eof_marker,
         }
         return message

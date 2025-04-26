@@ -264,12 +264,13 @@ class Worker:
             logging.error(f"Error sending data to output queue: {e}")
             raise e
 
-    def _add_metadata(self, client_id, data, eof_marker):
+    def _add_metadata(self, client_id, data, eof_marker, query=None):
         """Prepare the message to be sent to the output queue"""
         message = {        
             "client_id": client_id,
             "data": data,
             "EOF_MARKER": eof_marker,
+            "query": query,
         }
         return message
         
