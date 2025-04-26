@@ -256,10 +256,8 @@ class Worker:
                 message=Serializer.serialize(message),
                 persistent=True
             )
-            # if success:
-            #     logging.info(f"Sent {len(data) if isinstance(data, list) else 1} joined records to output queue for client {client_id}")
-            # else:
-            #     logging.error(f"Failed to send joined data to output queue for client {client_id}")
+            if not success:
+                logging.error(f"Failed to send joined data to output queue for client {client_id}")
         except Exception as e:
             logging.error(f"Error sending data to output queue: {e}")
             raise e
