@@ -93,13 +93,6 @@ class Client:
                     yield batch
         except IOError as e:
             raise IOError(f"Error reading file {file_path}: {e}")
-
-    def _recv_response(self):
-        if self.skt is None:
-            raise Exception("Socket not connected")
-        
-        data = self.protocol.recv_response(self.skt)
-        return data
     
     # New wrapper methods
     def start_sender_thread(self, file_paths=None):

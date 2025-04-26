@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 from dotenv import load_dotenv
-from worker import Worker
+from Worker import Worker
 
 # Setup logging
 logging.basicConfig(
