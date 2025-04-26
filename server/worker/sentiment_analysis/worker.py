@@ -19,10 +19,10 @@ logging.basicConfig(
 
 # Queue names and constants
 CONSUMER_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE")
-RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE")
+PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
 
 class SentimentWorker:
-    def __init__(self, consumer_queue_name=CONSUMER_QUEUE, response_queue_name=RESPONSE_QUEUE):
+    def __init__(self, consumer_queue_name=CONSUMER_QUEUE, response_queue_name=PRODUCER_QUEUE):
         self._running = True
         self.consumer_queue_name = consumer_queue_name
         self.response_queue_name = response_queue_name
@@ -92,16 +92,18 @@ class SentimentWorker:
             start_time = time.time()
             deserialized_message = Serializer.deserialize(message.body)
             
-            # Extract clientId and data from the deserialized message
-            client_id = deserialized_message.get("clientId")
+            # Extract client_id and data from the deserialized message
+            client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER", False)
+
+            logging.info(f"Received message from client_id '{client_id}'")
             
             if eof_marker:
-                logging.info(f"\033[93mReceived EOF marker for clientId '{client_id}'\033[0m")
+                logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}'\033[0m")
                 # Pass through EOF marker to response queue
                 response_message = {
-                    "clientId": client_id,
+                    "client_id": client_id,
                     "query": "Q5",
                     "data": [],
                     "EOF_MARKER": True
@@ -123,7 +125,7 @@ class SentimentWorker:
                 
                 # Prepare response message
                 response_message = {
-                    "clientId": client_id,
+                    "client_id": client_id,
                     "query": "Q5",
                     "data": processed_data
                 }

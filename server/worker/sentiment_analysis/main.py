@@ -18,7 +18,7 @@ async def main():
     
     # Get configuration from environment variables
     consumer_queue = os.getenv("ROUTER_CONSUME_QUEUE")
-    response_queue = os.getenv("RESPONSE_QUEUE")
+    producer_queue = os.getenv("ROUTER_PRODUCER_QUEUE")
     
     # Add retry logic for service initialization
     retry_count = 0
@@ -28,7 +28,7 @@ async def main():
             # Create worker with the environment configuration
             worker = SentimentWorker(
                 consumer_queue_name=consumer_queue,
-                response_queue_name=response_queue
+                response_queue_name=producer_queue
             )
             
             success = await worker.run()

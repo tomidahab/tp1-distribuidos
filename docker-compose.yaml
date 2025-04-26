@@ -46,7 +46,7 @@ services:
     environment:
       - NUMBER_OF_PRODUCER_WORKERS=1
       - INPUT_QUEUE=boundary_movies_router
-      - OUTPUT_QUEUES=filter_by_year_worker_1,filter_by_year_worker_2,sentiment_analysis_worker
+      - OUTPUT_QUEUES=filter_by_year_worker_1,filter_by_year_worker_2
       - BALANCER_TYPE=round_robin
     depends_on:
       - rabbitmq
@@ -278,7 +278,7 @@ services:
       - ./server/worker/sentiment_analysis/.env
     environment:
       - ROUTER_CONSUME_QUEUE=sentiment_analysis_worker
-      - RESPONSE_QUEUE=average_sentiment_router
+      - ROUTER_PRODUCER_QUEUE=average_sentiment_router
     depends_on:
       - rabbitmq
     volumes:
