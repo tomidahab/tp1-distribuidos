@@ -19,6 +19,7 @@ load_dotenv()
 # Constants for query types - these match what the previous worker outputs
 QUERY_EQ_YEAR = "eq_year"
 QUERY_GT_YEAR = "gt_year"
+QUERY_1 = os.getenv("QUERY_1", "1")
 
 # Constants for data processing
 PRODUCTION_COUNTRIES = "production_countries"
@@ -139,7 +140,7 @@ class Worker:
             # Extract client_id, data, and query from the deserialized message
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
-            query_type = deserialized_message.get("query")
+            query = deserialized_message.get("query")
             eof_marker = deserialized_message.get("EOF_MARKER")
             if eof_marker:
                 # logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}'\033[0m")
@@ -152,7 +153,7 @@ class Worker:
                 await message.ack()
                 return
                 
-            if query_type == QUERY_EQ_YEAR:
+            if query == QUERY_EQ_YEAR:
                 data_eq_one_country, data_response_queue = self._filter_data(data)
                 if data_eq_one_country:
                     projected_data = self._project_to_columns(data_eq_one_country)
@@ -160,14 +161,14 @@ class Worker:
                 if data_response_queue:
                     await self.send_response_queue(client_id, data_response_queue, self.producer_queue_names[1])
                     
-            elif query_type == QUERY_GT_YEAR:
+            elif query == QUERY_GT_YEAR:
                 data_eq_one_country, _ = self._filter_data(data)
                 if data_eq_one_country:
                     projected_data = self._project_to_columns(data_eq_one_country)
                     await self.send_eq_one_country(client_id, projected_data, self.producer_queue_names[0])
                     
             else:
-                logging.warning(f"Unknown query type: {query_type}, client ID: {client_id}")
+                logging.warning(f"Unknown query type: {query}, client ID: {client_id}")
             
             # Acknowledge message
             await message.ack()
@@ -201,9 +202,9 @@ class Worker:
         if not success:
             logging.error(f"Failed to send data to eq_one_country queue")
 
-    async def send_response_queue(self, client_id, data, queue_name=RESPONSE_QUEUE):
+    async def send_response_queue(self, client_id, data, queue_name=RESPONSE_QUEUE, query=QUERY_1):
         """Send data to the response queue in our exchange"""
-        message = self._add_metadata(client_id, data)
+        message = self._add_metadata(client_id, data, query=query)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
             routing_key=queue_name,
@@ -213,12 +214,13 @@ class Worker:
         if not success:
             logging.error(f"Failed to send data to response queue")
 
-    def _add_metadata(self, client_id, data, eof_marker=False):
+    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
         """Add metadata to the message"""
         message = {        
             "client_id": client_id,
             "EOF_MARKER": eof_marker,
-            "data": data
+            "data": data,
+            "query": query,
         }
         return message
 
