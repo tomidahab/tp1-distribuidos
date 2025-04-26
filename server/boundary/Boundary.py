@@ -129,6 +129,7 @@ class Boundary:
         # Extract client_id and data from the deserialized message
         client_id = deserialized_message.get("client_id")
         data = deserialized_message.get("data")
+        query = deserialized_message.get("query")
         
         if not data:
             logging.warning(f"Response message contains no data")
@@ -152,29 +153,8 @@ class Boundary:
                 # Prepare data for sending
                 proto = self.protocol(asyncio.get_running_loop())
                 
-                # Transform the data into a more user-friendly format
-                formatted_data = []
-                for movie in data:
-                    # Parse the genres string into a list of genre names
-                    genres_list = []
-                    try:
-                        # The genres are stored as a string representation of a list of dicts
-                        genres_data = json.loads(movie.get('genres', '[]').replace("'", '"'))
-                        genres_list = [genre.get('name') for genre in genres_data if genre.get('name')]
-                    except (json.JSONDecodeError, AttributeError, TypeError):
-                        # If we can't parse the genres, use an empty list
-                        pass
-                    
-                    # Create a formatted movie entry - without ID
-                    formatted_movie = {
-                        "Movie": movie.get('original_title', 'Unknown'),
-                        "Genres": genres_list
-                    }
-                    formatted_data.append(formatted_movie)
-                
-                # Serialize the transformed data
-                serialized_data = json.dumps(formatted_data)
-                await proto.send_all(client_socket, serialized_data)
+                serialized_data = json.dumps(data)
+                await proto.send_all(client_socket, serialized_data, query)
                 
             except Exception as e:
                 logging.error(f"Failed to send data to client {client_id}: {e}")
