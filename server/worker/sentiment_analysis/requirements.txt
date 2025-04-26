@@ -1,0 +1,6 @@
+aio-pika>=6.8.0
+configparser
+transformers==4.18.0
+torch>=2.0.0
+numpy>=1.22.3
+python-dotenv==1.1.0

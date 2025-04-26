@@ -15,13 +15,14 @@ async def main():
     """Main function to run the gateway worker"""
     load_dotenv()
     
+    number_of_producer_workers = int(os.getenv("NUMBER_OF_PRODUCER_WORKERS"))
     input_queue = os.getenv("INPUT_QUEUE")
     output_queues_str = os.getenv("OUTPUT_QUEUES")
     exchange_name = os.getenv("EXCHANGE_NAME")
     exchange_type = os.getenv("EXCHANGE_TYPE", "direct")
     balancer_type = os.getenv("BALANCER_TYPE", "round_robin")
 
-    if not input_queue or not output_queues_str or not exchange_name:
+    if not number_of_producer_workers or not input_queue or not output_queues_str or not exchange_name:
         logging.error("Required environment variables are not set!")
         return
 
@@ -40,6 +41,7 @@ async def main():
     logging.info(f"Using exchange: {exchange_name} ({exchange_type})")
     
     worker = RouterWorker(
+        number_of_producer_workers=number_of_producer_workers,
         input_queue=input_queue,
         output_queues=output_queues,
         exchange_name=exchange_name,

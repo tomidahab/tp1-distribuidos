@@ -18,12 +18,9 @@ async def main():
     
     # Get configuration from environment variables
     consumer_queue = os.getenv("ROUTER_CONSUME_QUEUE")
-    router_producer_queue = os.getenv("ROUTER_PRODUCER_QUEUE")
-    response_queue = os.getenv("RESPONSE_QUEUE", "response_queue")
-    producer_exchange = os.getenv("PRODUCER_EXCHANGE", "filtered_by_country_exchange")
-    producer_exchange_type = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
+    response_queue = os.getenv("RESPONSE_QUEUE")
     
-    if not consumer_queue or not router_producer_queue:
+    if not consumer_queue or not response_queue:
         logging.error("Environment variables for queues are not set properly.")
         return
 
@@ -35,9 +32,7 @@ async def main():
             # Create worker with the environment configuration
             worker = Worker(
                 consumer_queue_name=consumer_queue,
-                producer_queue_names=[router_producer_queue, response_queue],
-                exchange_name_producer=producer_exchange,
-                exchange_type_producer=producer_exchange_type
+                producer_queue_name=[response_queue],
             )
             
             success = await worker.run()

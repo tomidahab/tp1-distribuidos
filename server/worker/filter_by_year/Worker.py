@@ -133,9 +133,15 @@ class Worker:
         try:
             deserialized_message = Serializer.deserialize(message.body)
             
-            # Extract clientId and data from the deserialized message
-            client_id = deserialized_message.get("clientId")
+            # Extract client_id and data from the deserialized message
+            client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
+            eof_marker = deserialized_message.get("EOF_MARKER")
+
+            if eof_marker:
+                await self.send_data(client_id, data, QUERY_GT_YEAR, True)
+                await message.ack()
+                return
             
             # Process the movie data
             if data:
@@ -153,26 +159,25 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_data(self, client_id, data, query_type):
+    async def send_data(self, client_id, data, query, eof_marker=False):
         """Send data to the router queue with query type in metadata"""
-        message = self._add_metadata(client_id, data, query_type)
+        message = self._add_metadata(client_id, data, eof_marker, query)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
             routing_key=self.producer_queue_name,
             message=Serializer.serialize(message),
             persistent=True
         )
-        if success:
-            logging.info(f"Sent {len(data)} records with query type '{query_type}' to router queue")
-        else:
-            logging.error(f"Failed to send data with query type '{query_type}' to router queue")
+        if not success:
+            logging.error(f"Failed to send data with query type '{query}' to router queue")
 
-    def _add_metadata(self, client_id, data, query_type):
+    def _add_metadata(self, client_id, data, eof_marker, query):
         """Add metadata including query type to the message"""
         message = {        
-            "clientId": client_id,
+            "client_id": client_id,
             "data": data,
-            "query": query_type
+            "query": query,
+            "EOF_MARKER": eof_marker,
         }
         return message
 
