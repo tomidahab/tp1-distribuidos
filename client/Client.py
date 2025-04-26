@@ -13,6 +13,7 @@ logging.basicConfig(level=logging.INFO)
 # Constants
 QUERY_1 = os.getenv("QUERY_1", "1")
 QUERY_4 = os.getenv("QUERY_4", "4")
+QUERY_5 = os.getenv("QUERY_5", "5")
 
 class Client:
     def __init__(self, name: str, age: int):
@@ -25,6 +26,7 @@ class Client:
         self.receiver_thread = None
         self.output_file_q1 = f"output/output_records_client_{self.name}_Q1.json"
         self.output_file_q4 = f"output/output_records_client_{self.name}_Q4.json"
+        self.output_file_q5 = f"output/output_records_client_{self.name}_Q5.json"
         
     def __str__(self):
         return f"Client(name={self.name}, age={self.age})"
@@ -147,6 +149,10 @@ class Client:
                         elif query == QUERY_4:
                             parsed_data = self._format_data_query_4(parsed_data)
                             self._write_to_file(self.output_file_q4, parsed_data)
+                        elif query == QUERY_5:
+                            #parse data if needed
+                            # parsed_data = self._format_data_query_5(parsed_data) 
+                            self._write_to_file(self.output_file_q5, parsed_data)
                        
                     except json.JSONDecodeError as e:
                         logging.error(f"Failed to parse response as JSON: {e}")
