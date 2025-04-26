@@ -277,7 +277,7 @@ services:
     env_file:
       - ./server/worker/sentiment_analysis/.env
     environment:
-      - ROUTER_CONSUME_QUEUE=sentiment_analysis_workers
+      - ROUTER_CONSUME_QUEUE=sentiment_analysis_worker
       - OUTPUT_QUEUE=average_sentiment_router
     depends_on:
       - rabbitmq
