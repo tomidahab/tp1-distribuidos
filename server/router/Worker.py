@@ -119,7 +119,7 @@ class RouterWorker:
                 self.end_of_file_received[client_id] = self.end_of_file_received.get(client_id, 0) + 1
                 logging.info(f"Received EOF marker for client {client_id} - count: {self.end_of_file_received[client_id]}")
                 if self.end_of_file_received[client_id] >= self.number_of_producer_workers:
-                    await self._send_eof_to_all_queues(client_id)
+                    await self._send_eof_to_all_queues(client_id, data)
                     self.end_of_file_received[client_id] = 0
                 await message.ack()
                 return
@@ -204,11 +204,11 @@ class RouterWorker:
         if hasattr(self, 'rabbit_client'):
             asyncio.create_task(self.rabbit_client.close())
 
-    async def _send_eof_to_all_queues(self, client_id):
+    async def _send_eof_to_all_queues(self, client_id, data):
         """Send EOF marker to all output queues for a specific client ID"""
         eof_message = {
             "client_id": client_id,
-            "data": None,
+            "data": data,
             "EOF_MARKER": True
         }
         for queue in self.output_queues:
