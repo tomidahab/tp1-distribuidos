@@ -247,10 +247,15 @@ class Boundary:
     """
     result = []
     for row in data:
-        if 'cast' in row:
+        if 'cast' in row and row['cast']:
             try:
-                # Parse the JSON string into a list of dictionaries
-                cast_data = json.loads(row['cast'].replace("'", '"'))
+                # Handle the string format properly - it's using Python's repr format
+                # First, make it valid JSON by replacing Python-style single quotes
+                cast_str = row['cast']
+                # Use ast.literal_eval which can safely parse Python literal structures
+                import ast
+                cast_data = ast.literal_eval(cast_str)
+                
                 # Extract only the 'name' field from each dictionary
                 cast_names = [item.get('name') for item in cast_data if isinstance(item, dict) and item.get('name')]
                 
@@ -258,8 +263,9 @@ class Boundary:
                 if cast_names:
                     row['cast'] = cast_names
                     result.append(row)
-            except (json.JSONDecodeError, TypeError):
+            except (SyntaxError, ValueError, TypeError) as e:
                 # Skip rows with unparseable cast data
+                logging.warning(f"Could not parse cast data: {e}")
                 pass
     return result
 
