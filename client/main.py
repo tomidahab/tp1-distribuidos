@@ -22,7 +22,7 @@ def main():
         files_to_send = [
             config.get_movies(),
             config.get_credits(),
-            # config.get_ratings(),
+            config.get_ratings(),
         ]
         
         # Start sender thread and get the thread object
