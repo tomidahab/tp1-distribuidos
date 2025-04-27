@@ -1,6 +1,7 @@
 import ast
 import asyncio
 import logging
+import os
 import signal
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
@@ -11,6 +12,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
+QUERY_2 = os.getenv("QUERY_2", "2")
 CONSUMER_QUEUE_NAME = "top_5_budget_queue"
 RES_QUEUE = "query2_res"
 RELEASE_DATE = "release_date"
@@ -130,7 +132,7 @@ class Worker:
             deserialized_message = Serializer.deserialize(message.body)
             
             # Extract clientId and data from the deserialized message
-            client_id = deserialized_message.get("clientId")
+            client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             
             # Process the movie data - preview first item
@@ -161,23 +163,27 @@ class Worker:
         """Send data to the eq_year queue in our exchange"""
         top_5_countries = dict(sorted(self.dictionary_countries_budget.items(), key=lambda kv: kv[1], reverse=True)[:5])
         logging.info(f"sending res = {str(top_5_countries)}")
-        message = self._addMetaData(top_5_countries,client_id)
-        await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
-            routing_key=RESPONSE_QUEUE,
+        message = self._add_metadata(client_id, top_5_countries, query=QUERY_2)
+        logging.info(f"sending message = {str(message)}")
+        success = await self.rabbitmq.publish_to_queue(
+            queue_name=RESPONSE_QUEUE,
             message=Serializer.serialize(message),
             persistent=True
         )
+        if not success:
+            logging.error(f"Failed to send data to response queue")
 
     
-    def _addMetaData(self, data, client_id):
-        # Yeah this is basically a one line function, but its a function bc if in the future
-        # the logic of adding meta data gets more complex is all encapsulated here.
+    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+        """Add metadata to the message"""
         message = {        
-        "clientId": client_id,
-        "data": data
+            "client_id": client_id,
+            "EOF_MARKER": eof_marker,
+            "data": data,
+            "query": query,
         }
         return message
-  
+
 
     def _add_dictionary(self, data):
         """Combines received dictionary with the one that it has"""
@@ -186,8 +192,6 @@ class Worker:
             for key in set(self.dictionary_countries_budget) | set(data)
         }
         self.received_messages+=1
-        logging.info(f"Combined dictionary to form {self.dictionary_countries_budget}")
-
         return
         
     def _handle_shutdown(self, *_):

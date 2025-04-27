@@ -130,7 +130,7 @@ class Worker:
         # Yeah this is basically a one line function, but its a function bc if in the future
         # the logic of adding meta data gets more complex is all encapsulated here.
         message = {        
-        "clientId": client_id,
+        "client_id": client_id,
         "data": data
         }
         return message
@@ -143,17 +143,19 @@ class Worker:
             deserialized_message = Serializer.deserialize(message.body)
             
             # Extract clientId and data from the deserialized message
-            client_id = deserialized_message.get("clientId")
+            client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
+            eof_marker = deserialized_message.get("EOF_MARKER")
+
+            if eof_marker:
+                logging.info("Received a EOF")
+                self._running = False
+                await self.send_dic(client_id)
+                await message.ack()
+                return
 
             if data:
-                if data != EOF_MARKER:
-                    self._filter_data(data)
-                else:
-                    logging.info("Received a EOF")
-                    await self.send_dic(client_id)
-                    await message.ack()
-                    return
+                self._filter_data(data)
 
                 """if data_eq_year:
                     await self.send_eq_year(data_eq_year)
@@ -173,13 +175,15 @@ class Worker:
 
     async def send_dic(self,client_id):
         """Send data to the top5 queue in our exchange"""
-        logging.info(f"sending res = {str(self.dictionary_countries_budget)}")
         message = self._addMetaData(self.dictionary_countries_budget,client_id)
+        logging.info(f"sending message = {str(message)}")
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
             routing_key=RESPONSE_QUEUE,
             message=Serializer.serialize(message),
             persistent=True
         )
+        self.dictionary_countries_budget = {}
+
         logging.info(f"[Worker1] Published to exchange '{self.exchange_name_producer}' routing_key='{RESPONSE_QUEUE}'")
 
 
@@ -189,14 +193,14 @@ class Worker:
             #logging.info(f"record{str(record)}")
             budget = (record.pop(BUDGET, None))
             countries = (record.pop(PRODUCTION_COUNTRIES, None))
-            genres = (record.pop(GENRES, None))
-            imdb_id = (record.pop(IMBD_ID, None))
-            original_title = (record.pop(ORIGINAL_TITLE, None))
-            release_date = (record.pop(RELEASE_DATE, None))
+            #genres = (record.pop(GENRES, None))
+            #imdb_id = (record.pop(IMBD_ID, None))
+            #original_title = (record.pop(ORIGINAL_TITLE, None))
+            #release_date = (record.pop(RELEASE_DATE, None))
 
-            if genres is None or imdb_id is None or original_title is None or release_date is None:
-                logging.error(f"Record missing some field")
-                continue
+            #if genres is None or imdb_id is None or original_title is None or release_date is None:
+            #    logging.error(f"Record missing some field")
+            #    continue
 
             if countries is None:
                 logging.error(f"Record missing '{PRODUCTION_COUNTRIES}' field: {record}")
@@ -232,9 +236,6 @@ class Worker:
                     if NAME in country_obj:
                         country = country_obj.get(NAME)
                         self.dictionary_countries_budget[country] = self.dictionary_countries_budget.get(country, 0) + int(budget)
-
-        logging.info(f"dic: {str(self.dictionary_countries_budget)}")
-
         return
         
     def _handle_shutdown(self, *_):

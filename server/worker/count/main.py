@@ -18,10 +18,14 @@ async def main():
     
     # Get configuration from environment variables
     consumer_queue = os.getenv("ROUTER_CONSUME_QUEUE")
-    producer_queue = os.getenv("ROUTER_PRODUCER_QUEUE")
-    producer_exchange = os.getenv("PRODUCER_EXCHANGE", "filtered_data_exchange")
+    router_producer_queue = os.getenv("ROUTER_PRODUCER_QUEUE")
+    producer_exchange = os.getenv("PRODUCER_EXCHANGE")
     producer_exchange_type = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
     
+    if not consumer_queue or not router_producer_queue:
+        logging.error("Environment variables for queues are not set properly.")
+        return
+
     # Add retry logic for service initialization
     retry_count = 0
     
@@ -29,8 +33,8 @@ async def main():
         try:
             # Create worker with the environment configuration
             worker = Worker(
-                consumer_queue_names=[consumer_queue],
-                producer_queue_name=producer_queue,
+                consumer_queue_name=consumer_queue,
+                producer_queue_names=[router_producer_queue],
                 exchange_name_producer=producer_exchange,
                 exchange_type_producer=producer_exchange_type
             )
@@ -53,5 +57,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    logging.info("Starting filter_by_year worker service...")
+    logging.info("Starting filter_by_country worker service...")
     asyncio.run(main())
