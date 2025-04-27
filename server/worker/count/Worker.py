@@ -16,20 +16,9 @@ logging.basicConfig(
 # Load environment variables
 load_dotenv()
 
-# Constants for query types - these match what the previous worker outputs
-QUERY_EQ_YEAR = "eq_year"
-QUERY_GT_YEAR = "gt_year"
-QUERY_1 = os.getenv("QUERY_1", "1")
-
-# Constants for data processing
-PRODUCTION_COUNTRIES = "production_countries"
-ISO_3166_1 = "iso_3166_1"
-ONE_COUNTRY = "AR"
-N_COUNTRIES = ["AR", "ES"]
 
 # Output queues and exchange
 ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
-RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_by_country_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
 
@@ -40,7 +29,7 @@ class Worker:
                  consumer_queue_name=ROUTER_CONSUME_QUEUE, 
                  exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
                  exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
-                 producer_queue_names=[ROUTER_PRODUCER_QUEUE, RESPONSE_QUEUE]):
+                 producer_queue_names=[ROUTER_PRODUCER_QUEUE]):
 
         self._running = True
         self.consumer_queue_name = consumer_queue_name
@@ -48,6 +37,8 @@ class Worker:
         self.exchange_name_producer = exchange_name_producer
         self.exchange_type_producer = exchange_type_producer
         self.rabbitmq = RabbitMQClient()
+
+        self.participations = {}
         
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -132,7 +123,7 @@ class Worker:
         return True
     
     async def _process_message(self, message):
-        """Process a message based on its query type"""
+        """Process a message"""
         try:
             # Deserialize the message
             deserialized_message = Serializer.deserialize(message.body)
@@ -143,133 +134,48 @@ class Worker:
             query = deserialized_message.get("query")
             eof_marker = deserialized_message.get("EOF_MARKER")
             if eof_marker:
-                # logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}'\033[0m")
-                await self.send_eq_one_country(client_id, data, self.producer_queue_names[0], True)
+                logging.info(f"EOF marker received for client_id '{client_id}'")
+                await self.send_data(client_id, self.participations, False, query)
+                await self.send_data(client_id, [], True, query)
                 await message.ack()
                 return
-            
-            if not data:
-                logging.warning(f"Received message with no data, client ID: {client_id}")
-                await message.ack()
-                return
-                
-            if query == QUERY_EQ_YEAR:
-                data_eq_one_country, data_response_queue = self._filter_data(data)
-                if data_eq_one_country:
-                    projected_data = self._project_to_columns(data_eq_one_country)
-                    await self.send_eq_one_country(client_id, projected_data, self.producer_queue_names[0])
-                if data_response_queue:
-                    await self.send_response_queue(client_id, data_response_queue, self.producer_queue_names[1])
-                    
-            elif query == QUERY_GT_YEAR:
-                data_eq_one_country, _ = self._filter_data(data)
-                if data_eq_one_country:
-                    projected_data = self._project_to_columns(data_eq_one_country)
-                    await self.send_eq_one_country(client_id, projected_data, self.producer_queue_names[0])
-                    
-            else:
-                logging.warning(f"Unknown query type: {query}, client ID: {client_id}")
-            
-            # Acknowledge message
+
+            if data:
+                for actor, count in data.items():
+                    self.participations[actor] = self.participations.get(actor, 0) + count
+
             await message.ack()
             
         except Exception as e:
-            logging.error(f"Error processing message: {e}")
-            # Reject the message and requeue it
+            logging.error(f"Failed to deserialize message: {e}")
             await message.reject(requeue=True)
+            return
+    
 
-    def _project_to_columns(self, data):
-        """Project the data to only include the 'id' column"""
-        if not data:
-            return []
-
-        projected_data = []
-        for record in data:
-            if 'id' in record:
-                projected_data.append(record['id'])
-
-        return projected_data
-
-    async def send_eq_one_country(self, client_id, data, queue_name=ROUTER_PRODUCER_QUEUE, eof_marker=False):
-        """Send data to the eq_one_country queue in our exchange"""
-        message = self._add_metadata(client_id, data, eof_marker)
+    async def send_data(self, client_id, data, eof_marker=False, query=None):
+        """Send data to the router queue with query in metadata"""
+        message = self._add_metadata(client_id, data, eof_marker, query)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
-            routing_key=queue_name,
+            routing_key=self.producer_queue_names[0],
             message=Serializer.serialize(message),
             persistent=True
         )
         if not success:
-            logging.error(f"Failed to send data to eq_one_country queue")
+            logging.error(f"Failed to send data with query '{query}' to router queue")
 
-    async def send_response_queue(self, client_id, data, queue_name=RESPONSE_QUEUE, query=QUERY_1):
-        """Send data to the response queue in our exchange"""
-        message = self._add_metadata(client_id, data, query=query)
-        success = await self.rabbitmq.publish(
-            exchange_name=self.exchange_name_producer,
-            routing_key=queue_name,
-            message=Serializer.serialize(message),
-            persistent=True
-        )
-        if not success:
-            logging.error(f"Failed to send data to response queue")
-
+    #TODO: move _add_metadata to Serializer
     def _add_metadata(self, client_id, data, eof_marker=False, query=None):
         """Add metadata to the message"""
         message = {        
             "client_id": client_id,
             "EOF_MARKER": eof_marker,
             "data": data,
-            "query": query,
+            "query": query
         }
         return message
 
-    def _filter_data(self, data):
-        """Filter data into two lists based on the country"""
-        data_eq_one_country, data_response_queue = [], []
-        
-        for record in data:
-            countries = (record.pop(PRODUCTION_COUNTRIES, None))
-            if countries is None:
-                logging.info(f"Record missing '{PRODUCTION_COUNTRIES}' field: {record}")
-                continue
-            
-            if isinstance(countries, str):
-                try:
-                    countries = ast.literal_eval(countries)
-                except (SyntaxError, ValueError):
-                    logging.error(f"Failed to parse countries string: {countries}")
-                    continue
 
-            if not isinstance(countries, list):
-                logging.error(f"Countries is not a list after processing: {countries}")
-                continue
-                    
-            record_copy = record.copy()
-            has_one_country = False
-            found_countries = set()
-            
-            for country_obj in countries:
-                if not isinstance(country_obj, dict):
-                    logging.warning(f"Country object is not a dictionary: {country_obj}")
-                    continue
-                    
-                if ISO_3166_1 in country_obj:
-                    country = country_obj.get(ISO_3166_1)
-                    if country == ONE_COUNTRY:
-                        has_one_country = True
-                    if country in N_COUNTRIES:
-                        found_countries.add(country)
-            
-            if has_one_country:
-                data_eq_one_country.append(record_copy)
-                
-            # Only add records that contain ALL countries from N_COUNTRIES
-            if found_countries == set(N_COUNTRIES):
-                data_response_queue.append(record_copy)
-            
-        return data_eq_one_country, data_response_queue
-        
     def _handle_shutdown(self, *_):
         """Handle shutdown signals"""
         logging.info(f"Shutting down worker...")

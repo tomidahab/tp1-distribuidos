@@ -2,12 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY boundary/requirements.txt .
+COPY router/requirements.txt . 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY boundary/*.py .
+COPY router/*.py .
+COPY router/load_balancer/*.py .
 
 ENV PYTHONUNBUFFERED=1
-EXPOSE 5000
 
 CMD ["python", "main.py"]

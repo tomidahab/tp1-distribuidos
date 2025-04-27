@@ -21,8 +21,8 @@ def main():
         # Define which files to send
         files_to_send = [
             config.get_movies(),
-            # config.get_ratings(),  # Uncomment to send more files
-            # config.get_credits(),
+            config.get_credits(),
+            # config.get_ratings(),
         ]
         
         # Start sender thread and get the thread object
