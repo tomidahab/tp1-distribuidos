@@ -89,7 +89,6 @@ class SentimentWorker:
     async def _process_message(self, message):
         """Process a message from the queue"""
         try:
-            start_time = time.time()
             deserialized_message = Serializer.deserialize(message.body)
             
             # Extract client_id and data from the deserialized message
@@ -137,10 +136,7 @@ class SentimentWorker:
                     persistent=True
                 )
                 
-                if success:
-                    processing_time = time.time() - start_time
-                    logging.info(f"Sent {len(processed_data)} processed movies to response queue in {processing_time:.2f} seconds")
-                else:
+                if not success:
                     logging.error("Failed to send processed data to response queue")
             else:
                 logging.warning(f"Received empty data from client {client_id}")
@@ -172,10 +168,9 @@ class SentimentWorker:
                 elapsed = time.time() - start_time
                 progress_pct = (current_movie_num / total_movies) * 100
                 movies_per_sec = current_movie_num / max(elapsed, 0.1)
-                eta = (total_movies - current_movie_num) / max(movies_per_sec, 0.001)
                 
                 logging.info(f"Progress: {current_movie_num}/{total_movies} movies ({progress_pct:.1f}%) - " +
-                            f"Speed: {movies_per_sec:.1f} movies/sec - ETA: {eta:.1f} seconds")
+                            f"Speed: {movies_per_sec:.1f} movies/sec")
             
             for movie in current_batch:
                 try:

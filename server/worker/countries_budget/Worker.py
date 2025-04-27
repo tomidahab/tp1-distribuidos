@@ -149,9 +149,10 @@ class Worker:
 
             if eof_marker:
                 logging.info("Received a EOF")
-                self._running = False
                 await self.send_dic(client_id)
                 await message.ack()
+                self._running = False
+                self._handle_shutdown()
                 return
 
             if data:
@@ -175,6 +176,9 @@ class Worker:
 
     async def send_dic(self,client_id):
         """Send data to the top5 queue in our exchange"""
+        if not self._running:
+            self.dictionary_countries_budget = {}
+
         message = self._addMetaData(self.dictionary_countries_budget,client_id)
         logging.info(f"sending message = {str(message)}")
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,

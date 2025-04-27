@@ -124,13 +124,6 @@ class RouterWorker:
                 await message.ack()
                 return
                 
-            # Get the target queue using round-robin
-            target_queue = self.balancer.next_queue()
-            if not target_queue:
-                logging.error("No target queues available")
-                await message.reject(requeue=True)
-                return
-                
             # Prepare message to publish - maintain the query field if present
             outgoing_message = {
                 "client_id": client_id,
@@ -140,20 +133,46 @@ class RouterWorker:
             if query:
                 outgoing_message["query"] = query
             
-            
-            # Publish the message to the selected queue
-            success = await self.rabbit_client.publish(
-                exchange_name=self.exchange_name,
-                routing_key=target_queue,
-                message=Serializer.serialize(outgoing_message),
-                persistent=True
-            )
-            
-            if success:
-                await message.ack()
+            # Process message based on exchange type
+            if self.exchange_type == "fanout":
+                # For fanout exchanges, send to all output queues
+                success = True
+                for queue_name in self.output_queues:
+                    publish_success = await self.rabbit_client.publish(
+                        exchange_name=self.exchange_name,
+                        routing_key=queue_name,
+                        message=Serializer.serialize(outgoing_message),
+                        persistent=True
+                    )
+                    if not publish_success:
+                        logging.error(f"Failed to forward message to queue: {queue_name}")
+                        success = False
+                
+                if success:
+                    await message.ack()
+                else:
+                    await message.reject(requeue=True)
             else:
-                logging.error(f"Failed to forward message to queue: {target_queue}")
-                await message.reject(requeue=True)
+                # For direct exchanges, use the load balancer
+                target_queue = self.balancer.next_queue()
+                if not target_queue:
+                    logging.error("No target queues available")
+                    await message.reject(requeue=True)
+                    return
+                    
+                # Publish the message to the selected queue
+                success = await self.rabbit_client.publish(
+                    exchange_name=self.exchange_name,
+                    routing_key=target_queue,
+                    message=Serializer.serialize(outgoing_message),
+                    persistent=True
+                )
+                
+                if success:
+                    await message.ack()
+                else:
+                    logging.error(f"Failed to forward message to queue: {target_queue}")
+                    await message.reject(requeue=True)
                 
         except Exception as e:
             logging.error(f"Error processing message: {e}")

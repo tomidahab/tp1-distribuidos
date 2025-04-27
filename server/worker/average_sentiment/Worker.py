@@ -96,10 +96,6 @@ class Worker:
             data = deserialized_message.get("data", [])
             eof_marker = deserialized_message.get("EOF_MARKER", False)
             
-            # Debug log to see full message
-            if len(data) > 0:
-                logging.info(f"Data keys in first record: {data[0].keys()}")
-            
             if eof_marker:
                 logging.info(f"Received EOF marker for client_id '{client_id}'")
                 
@@ -127,10 +123,6 @@ class Worker:
                     "movie_count": negative_count
                 }]
                 
-                logging.info(f"===== FINAL SENTIMENT ANALYSIS RESULTS =====")
-                logging.info(f"Positive movies: {positive_count}, Average ratio: {positive_avg:.4f}")
-                logging.info(f"Negative movies: {negative_count}, Average ratio: {negative_avg:.4f}")
-                
                 # Use the _add_metadata function to prepare the response
                 response_message = self._add_metadata(client_id, result, True, QUERY_5)
                 
@@ -151,12 +143,6 @@ class Worker:
             
             # Process the sentiment data 
             if data:
-                logging.info(f"Received batch with {len(data)} movies for sentiment analysis from client '{client_id}'")
-                
-                # Log sample data
-                if len(data) > 0:
-                    logging.info(f"Sample record: {data[0]}")
-                
                 # Process each movie in the batch
                 for movie in data:
                     # Look for the sentiment field using multiple possible names
@@ -175,14 +161,6 @@ class Worker:
                 # Log current state
                 positive_count = self.sentiment_totals["POSITIVE"]["count"]
                 negative_count = self.sentiment_totals["NEGATIVE"]["count"]
-                
-                if positive_count > 0:
-                    positive_current_avg = self.sentiment_totals["POSITIVE"]["sum"] / positive_count
-                    logging.info(f"Running totals - Positive: {positive_count} movies, avg ratio: {positive_current_avg:.4f}")
-                
-                if negative_count > 0:
-                    negative_current_avg = self.sentiment_totals["NEGATIVE"]["sum"] / negative_count
-                    logging.info(f"Running totals - Negative: {negative_count} movies, avg ratio: {negative_current_avg:.4f}")
                 
                 # Acknowledge message
                 await message.ack()

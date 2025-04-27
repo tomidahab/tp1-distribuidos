@@ -28,6 +28,7 @@ BUDGET_QUEUE = "countries_budget_workers"
 
 COLUMNS_Q1 = {'genres': 3, 'id':5, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
 COLUMNS_Q2 = {'budget':2,'genres': 3, 'imdb_id':6, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
+COLUMNS_Q3 = {'id': 1, 'rating': 2}
 COLUMNS_Q4 = {"cast": 0, "movie_id": 2}
 COLUMNS_Q5 = {'budget': 2, 'imdb_id':6, 'original_title': 8, 'overview': 9, 'revenue': 15}
 EOF_MARKER = "EOF_MARKER"
@@ -142,9 +143,6 @@ class Boundary:
         data = deserialized_message.get("data")
         query = deserialized_message.get("query")
 
-        if query == "5":
-            logging.info(self.green(f"Received data for client {client_id} from sentiment analysis worker: {data}"))
-        
         if not data:
             logging.warning(f"Response message contains no data")
             await message.ack()
@@ -203,7 +201,6 @@ class Boundary:
                     logging.info(self.green(f"EOF received for CSV #{csvs_received} from client {addr[0]}:{addr[1]}"))
                     continue
 
-                # Process and route data based on CSV type
                 if csvs_received == MOVIES_CSV:
                     filtered_data_q1,filtered_data_q2, filtered_data_q5 = self._project_to_columns(data, [COLUMNS_Q1,COLUMNS_Q2, COLUMNS_Q5])
                     
@@ -221,16 +218,15 @@ class Boundary:
                     await self._send_data_to_rabbitmq_queue(prepared_data_q5, "sentiment_analysis_worker")
                 
                 elif csvs_received == CREDITS_CSV:
-                    # Process and send to credits router
                     filtered_data = self._project_to_columns(data, COLUMNS_Q4)
-                    filtered_data = self._removed_cast_extra_data(filtered_data)
+                    filtered_data = self._remove_cast_extra_data(filtered_data)
                     prepared_data = self._addMetaData(client_id, filtered_data)
                     await self._send_data_to_rabbitmq_queue(prepared_data, self.credits_router_queue)
                 
                 elif csvs_received == RATINGS_CSV:
-                    # Process and send to ratings router
-                    # For now, just forward the raw data - you can add specific processing later
-                    prepared_data = self._addMetaData(client_id, data)
+                    filtered_data = self._project_to_columns(data, COLUMNS_Q3)
+                    filtered_data = self._remove_ratings_with_0_rating(filtered_data)
+                    prepared_data = self._addMetaData(client_id, filtered_data)
                     await self._send_data_to_rabbitmq_queue(prepared_data, self.ratings_router_queue)
                 
             except ConnectionError:
@@ -258,7 +254,26 @@ class Boundary:
         elif csvs_received == RATINGS_CSV:
            await self._send_data_to_rabbitmq_queue(prepared_data, self.ratings_router_queue)
 
-  def _removed_cast_extra_data(self, data):
+  def _remove_ratings_with_0_rating(self, data):
+    """
+    Remove rows with a rating of 0 from the ratings data.
+    The rating field is expected to be a string that can be converted to a float.
+    """
+    result = []
+    for row in data:
+        if 'rating' in row and row['rating']:
+            try:
+                # Convert rating to float and check if it's greater than 0
+                rating = float(row['rating'])
+                if rating > 0:
+                    result.append(row)
+            except ValueError:
+                # Skip rows with unparseable rating data
+                logging.warning(f"Could not parse rating data: {row['rating']}")
+                pass
+    return result
+
+  def _remove_cast_extra_data(self, data):
     """
     Remove extra data from the cast field and filter out rows without cast.
     The cast field is expected to be a list of dictionaries, and we only want the 'name' field.

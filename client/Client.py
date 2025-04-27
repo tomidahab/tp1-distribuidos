@@ -13,6 +13,7 @@ logging.basicConfig(level=logging.INFO)
 # Constants
 QUERY_1 = os.getenv("QUERY_1", "1")
 QUERY_2 = os.getenv("QUERY_2", "2")
+QUERY_3 = os.getenv("QUERY_3", "3")
 QUERY_4 = os.getenv("QUERY_4", "4")
 QUERY_5 = os.getenv("QUERY_5", "5")
 
@@ -27,6 +28,7 @@ class Client:
         self.receiver_thread = None
         self.output_file_q1 = f"output/output_records_client_{self.name}_Q1.json"
         self.output_file_q2 = f"output/output_records_client_{self.name}_Q2.json"
+        self.output_file_q3 = f"output/output_records_client_{self.name}_Q3.json"
         self.output_file_q4 = f"output/output_records_client_{self.name}_Q4.json"
         self.output_file_q5 = f"output/output_records_client_{self.name}_Q5.json"
         
@@ -95,13 +97,6 @@ class Client:
                     yield batch
         except IOError as e:
             raise IOError(f"Error reading file {file_path}: {e}")
-
-    def _recv_response(self):
-        if self.skt is None:
-            raise Exception("Socket not connected")
-        
-        data = self.protocol.recv_response(self.skt)
-        return data
     
     # New wrapper methods
     def start_sender_thread(self, file_paths=None):
@@ -151,15 +146,20 @@ class Client:
                         elif query == QUERY_2:
                             self._write_to_file(self.output_file_q2, parsed_data)
                             logging.info(f"\033[94mReceived data for Query 2\033[0m")
+                        elif query == QUERY_3:
+                            #parse data if needed
+                            # parsed_data = self._format_data_query_3(parsed_data) 
+                            self._write_to_file(self.output_file_q3, parsed_data)
+                            logging.info(f"\033[94mReceived data for Query {QUERY_3}\033[0m")
                         elif query == QUERY_4:
                             parsed_data = self._format_data_query_4(parsed_data)
                             self._write_to_file(self.output_file_q4, parsed_data)
-                            logging.info(f"\033[94mReceived data for Query 4\033[0m")
+                            logging.info(f"\033[94mReceived data for Query {QUERY_4}\033[0m")
                         elif query == QUERY_5:
                             #parse data if needed
                             # parsed_data = self._format_data_query_5(parsed_data) 
                             self._write_to_file(self.output_file_q5, parsed_data)
-                            logging.info(f"\033[94mReceived data for Query 5\033[0m")
+                            logging.info(f"\033[94mReceived data for Query {QUERY_5}\033[0m")
                             
                     except json.JSONDecodeError as e:
                         logging.error(f"Failed to parse response as JSON: {e}")
