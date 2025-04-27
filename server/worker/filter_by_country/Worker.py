@@ -205,6 +205,7 @@ class Worker:
     async def send_response_queue(self, client_id, data, queue_name=RESPONSE_QUEUE, query=QUERY_1):
         """Send data to the response queue in our exchange"""
         message = self._add_metadata(client_id, data, query=query)
+        logging.info(f"sending message = {str(message)}")
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
             routing_key=queue_name,

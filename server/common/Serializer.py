@@ -16,7 +16,6 @@ class Serializer:
     Serializer for converting between Python data structures and binary data
     for messaging between components.
     """
-
     @staticmethod
     def serialize(data):
         """
@@ -35,7 +34,6 @@ class Serializer:
         except Exception as e:
             logging.error(f"Serialization error: {e}")
             raise ValueError(f"Failed to serialize data: {e}")
-
     @staticmethod
     def deserialize(binary_data):
         """

@@ -1,7 +1,6 @@
 import ast
 import asyncio
 import logging
-import os
 import signal
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
@@ -12,22 +11,26 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-QUERY_2 = os.getenv("QUERY_2", "2")
-CONSUMER_QUEUE_NAME = "top_5_budget_queue"
-RES_QUEUE = "query2_res"
+#TODO move this to a common config file or common env var since boundary hasthis too
+BOUNDARY_QUEUE_NAME = "countries_budget_workers"
+#RES_QUEUE = "query2_res"
+IMBD_ID = "imdb_id"
+ORIGINAL_TITLE = "original_title"
 RELEASE_DATE = "release_date"
-EXCHANGE_NAME_PRODUCER = "top_5_budget_exchange"
+EXCHANGE_NAME_PRODUCER = "countries_budget_exchange"
 EXCHANGE_TYPE_PRODUCER = "direct"
 PRODUCTION_COUNTRIES = "production_countries"
+GENRES = "genres"
 BUDGET = "budget"
 ISO_3166_1 = "iso_3166_1"
 NAME = "name"
 EOF_MARKER = "EOF_MARKER"
-RESPONSE_QUEUE = "response_queue"
-COUNTRIES_BUDGET_WORKERS = 2 #TODO move this into docker-compose
+RESPONSE_QUEUE = "top_5_budget_queue"
+
+
 
 class Worker:
-    def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[CONSUMER_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[RES_QUEUE]):
+    def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[BOUNDARY_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[RESPONSE_QUEUE]):
 
         self._running = True
         self.consumer_queue_names = consumer_queue_names
@@ -37,7 +40,6 @@ class Worker:
         self.exchange_type_consumer = exchange_type_consumer
         self.exchange_type_producer = exchange_type_producer
         self.dictionary_countries_budget = {}
-        self.received_messages = 0
         self.rabbitmq = RabbitMQClient()
         
         # Set up signal handlers for graceful shutdown
@@ -113,7 +115,6 @@ class Worker:
 
         # Set up consumers
         for queue_name in self.consumer_queue_names:
-            logging.info(f"[Worker2] Declared and consuming from queue '{queue_name}'")
             success = await self.rabbitmq.consume(
                 queue_name=queue_name,
                 callback=self._process_message,
@@ -125,6 +126,16 @@ class Worker:
 
         return True
     
+    def _addMetaData(self, data, client_id):
+        # Yeah this is basically a one line function, but its a function bc if in the future
+        # the logic of adding meta data gets more complex is all encapsulated here.
+        message = {        
+        "client_id": client_id,
+        "data": data
+        }
+        return message
+  
+    
     async def _process_message(self, message):
         """Process a message from the queue"""
         try:
@@ -134,15 +145,19 @@ class Worker:
             # Extract clientId and data from the deserialized message
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
-            
-            # Process the movie data - preview first item
-            if data and isinstance(data, dict):
-                self._add_dictionary(data)
-            else:
-                logging.error(f"data is not valid {data}")
-            if self.received_messages == COUNTRIES_BUDGET_WORKERS:
-                logging.info("Finalizing")
+            eof_marker = deserialized_message.get("EOF_MARKER")
+
+            if eof_marker:
+                logging.info("Received a EOF")
                 await self.send_dic(client_id)
+                await message.ack()
+                self._running = False
+                self._handle_shutdown()
+                return
+
+            if data:
+                self._filter_data(data)
+
                 """if data_eq_year:
                     await self.send_eq_year(data_eq_year)
                 if data_gt_year:
@@ -159,39 +174,72 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
 
-    async def send_dic(self, client_id):
-        """Send data to the eq_year queue in our exchange"""
-        top_5_countries = dict(sorted(self.dictionary_countries_budget.items(), key=lambda kv: kv[1], reverse=True)[:5])
-        logging.info(f"sending res = {str(top_5_countries)}")
-        message = self._add_metadata(client_id, top_5_countries, query=QUERY_2)
+    async def send_dic(self,client_id):
+        """Send data to the top5 queue in our exchange"""
+        if not self._running:
+            self.dictionary_countries_budget = {}
+
+        message = self._addMetaData(self.dictionary_countries_budget,client_id)
         logging.info(f"sending message = {str(message)}")
-        success = await self.rabbitmq.publish_to_queue(
-            queue_name=RESPONSE_QUEUE,
+        await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
+            routing_key=RESPONSE_QUEUE,
             message=Serializer.serialize(message),
             persistent=True
         )
-        if not success:
-            logging.error(f"Failed to send data to response queue")
+        self.dictionary_countries_budget = {}
 
-    
-    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
-        """Add metadata to the message"""
-        message = {        
-            "client_id": client_id,
-            "EOF_MARKER": eof_marker,
-            "data": data,
-            "query": query,
-        }
-        return message
+        logging.info(f"[Worker1] Published to exchange '{self.exchange_name_producer}' routing_key='{RESPONSE_QUEUE}'")
 
 
-    def _add_dictionary(self, data):
-        """Combines received dictionary with the one that it has"""
-        self.dictionary_countries_budget = {
-            key: self.dictionary_countries_budget.get(key, 0) + data.get(key, 0)
-            for key in set(self.dictionary_countries_budget) | set(data)
-        }
-        self.received_messages+=1
+    def _filter_data(self, data):
+        """Filter data and puts it in its dictionary"""
+        for record in data:
+            #logging.info(f"record{str(record)}")
+            budget = (record.pop(BUDGET, None))
+            countries = (record.pop(PRODUCTION_COUNTRIES, None))
+            #genres = (record.pop(GENRES, None))
+            #imdb_id = (record.pop(IMBD_ID, None))
+            #original_title = (record.pop(ORIGINAL_TITLE, None))
+            #release_date = (record.pop(RELEASE_DATE, None))
+
+            #if genres is None or imdb_id is None or original_title is None or release_date is None:
+            #    logging.error(f"Record missing some field")
+            #    continue
+
+            if countries is None:
+                logging.error(f"Record missing '{PRODUCTION_COUNTRIES}' field: {record}")
+                continue
+
+            #TODO more checks on budget
+            if budget is None:
+                logging.error(f"Record missing '{BUDGET}' field: {record}")
+                continue            
+
+            # Ensure countries is a list of dictionaries
+            if isinstance(countries, str):
+                # If it's a string that looks like a list, try to evaluate it
+                try:
+                    countries = ast.literal_eval(countries)
+                except (SyntaxError, ValueError):
+                    logging.error(f"Failed to parse countries string: {countries}")
+                    continue
+
+            # Ensure we have a valid list to work with
+            if not isinstance(countries, list):
+                logging.error(f"Countries is not a list after processing: {countries}")
+                continue
+                
+            record_copy = record.copy()  # Create a copy to avoid duplicating the same reference
+            
+            if len(countries) == 1:
+                for country_obj in countries:
+                    if not isinstance(country_obj, dict):
+                        logging.warning(f"Country object is not a dictionary: {country_obj}")
+                        continue
+                        
+                    if NAME in country_obj:
+                        country = country_obj.get(NAME)
+                        self.dictionary_countries_budget[country] = self.dictionary_countries_budget.get(country, 0) + int(budget)
         return
         
     def _handle_shutdown(self, *_):

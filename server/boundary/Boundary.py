@@ -7,6 +7,7 @@ import os
 from Protocol import Protocol
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 import csv
+import json
 from io import StringIO
 from common.Serializer import Serializer
 import json
@@ -19,8 +20,14 @@ load_dotenv()
 MOVIES_ROUTER_QUEUE = os.getenv("MOVIES_ROUTER_QUEUE")
 CREDITS_ROUTER_QUEUE = os.getenv("CREDITS_ROUTER_QUEUE")
 RATINGS_ROUTER_QUEUE = os.getenv("RATINGS_ROUTER_QUEUE")
+#TODO move this to a common config file or common env var since worker has this too
+BOUNDARY_QUEUE_NAME = "filter_by_year_workers"
+RESPONSE_QUEUE = "response_queue"
+COUNTRIES_BUDGET_WORKERS = 2
+BUDGET_QUEUE = "countries_budget_workers"
 
 COLUMNS_Q1 = {'genres': 3, 'id':5, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
+COLUMNS_Q2 = {'budget':2,'genres': 3, 'imdb_id':6, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
 COLUMNS_Q3 = {'id': 1, 'rating': 2}
 COLUMNS_Q4 = {"cast": 0, "movie_id": 2}
 COLUMNS_Q5 = {'budget': 2, 'imdb_id':6, 'original_title': 8, 'overview': 9, 'revenue': 15}
@@ -39,7 +46,7 @@ logging.basicConfig(
 )
 
 class Boundary:
-  def __init__(self, port=5000, listen_backlog=100, movies_router_queue=MOVIES_ROUTER_QUEUE, credits_router_queue=CREDITS_ROUTER_QUEUE, ratings_router_queue=RATINGS_ROUTER_QUEUE):
+  def __init__(self, port=5000, listen_backlog=100, movies_router_queue=MOVIES_ROUTER_QUEUE, credits_router_queue=CREDITS_ROUTER_QUEUE, ratings_router_queue=RATINGS_ROUTER_QUEUE, countries_budget_queue= BUDGET_QUEUE):
     self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     self._server_socket.bind(("", port))
     self._server_socket.listen(listen_backlog)
@@ -53,6 +60,7 @@ class Boundary:
     self.rabbitmq = RabbitMQClient()  # Using default parameters
     
     # Router queues for different CSV types
+    self.countries_budget_queue = countries_budget_queue
     self.movies_router_queue = movies_router_queue
     self.credits_router_queue = credits_router_queue
     self.ratings_router_queue = ratings_router_queue
@@ -127,6 +135,8 @@ class Boundary:
     try:
         # Deserialize the message
         deserialized_message = Serializer.deserialize(message.body)
+
+        logging.info(f"RESPONSE RECEIVED: {deserialized_message}")
         
         # Extract client_id and data from the deserialized message
         client_id = deserialized_message.get("client_id")
@@ -185,18 +195,22 @@ class Boundary:
             try:
                 data = await self._receive_csv_batch(sock, proto)
                 if data == EOF_MARKER:
+                    #TODO CHECK HERE ON QUERY 2 THAT SENDS TO ALL WORKERS
                     await self._send_eof_marker(csvs_received, client_id)
                     csvs_received += 1
                     logging.info(self.green(f"EOF received for CSV #{csvs_received} from client {addr[0]}:{addr[1]}"))
                     continue
 
                 if csvs_received == MOVIES_CSV:
-                    filtered_data_q1, filtered_data_q5 = self._project_to_columns(data, [COLUMNS_Q1, COLUMNS_Q5])
+                    filtered_data_q1,filtered_data_q2, filtered_data_q5 = self._project_to_columns(data, [COLUMNS_Q1,COLUMNS_Q2, COLUMNS_Q5])
                     
                     # Send data for Q1 to the movies router
                     prepared_data_q1 = self._addMetaData(client_id, filtered_data_q1)
                     await self._send_data_to_rabbitmq_queue(prepared_data_q1, self.movies_router_queue)
-                    
+
+                    prepared_data_q2 = self._addMetaData(client_id, filtered_data_q2)
+                    await self._send_data_to_rabbitmq_queue(prepared_data_q2, self.countries_budget_queue)
+
                     # Send data for Q5 to the reviews router
                     prepared_data_q5 = self._addMetaData(client_id, filtered_data_q5)
                     #TODO change it so instead of sending to the sentiment analysis worker, it sends to the movies router
@@ -229,6 +243,11 @@ class Boundary:
            await self._send_data_to_rabbitmq_queue(prepared_data, self.movies_router_queue)
            #TODO: change it so instead of sending to the sentiment analysis worker, it sends to the movies router
            # and the router sends it to the respective worker based on the query in the metadata
+
+           #TODO CHANGE THIS TO ROUTER?
+           for i in range(0,COUNTRIES_BUDGET_WORKERS):
+                await self._send_data_to_rabbitmq_queue(prepared_data, self.countries_budget_queue)
+
            await self._send_data_to_rabbitmq_queue(prepared_data, "sentiment_analysis_worker")
         elif csvs_received == CREDITS_CSV:
             await self._send_data_to_rabbitmq_queue(prepared_data, self.credits_router_queue)
@@ -413,7 +432,6 @@ class Boundary:
     try:
         # Serialize the data to binary
         serialized_data = Serializer.serialize(data)
-        
         success = await self.rabbitmq.publish_to_queue(
             queue_name=queue_name,
             message=serialized_data,
