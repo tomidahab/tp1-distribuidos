@@ -137,6 +137,7 @@ class Worker:
                 logging.info(f"EOF marker received for client_id '{client_id}'")
                 await self.send_data(client_id, data, True, query)
             elif data:
+                # TODO: This is not necessarily anymore, it could be just an "anonymous" dict
                 self.participations[client_id] = {}
                 for actor in data:
                     actor_name = actor.get("name")

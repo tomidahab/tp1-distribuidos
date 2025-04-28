@@ -148,6 +148,7 @@ class Worker:
                 await self.send_data(client_id, transformed_data)
             else:
                 logging.warning(f"\033[93mReceived message without data for client_id '{client_id}'\033[0m")
+
             await message.ack()
             
         except Exception as e:
@@ -167,6 +168,7 @@ class Worker:
             logging.warning(f"Received empty data batch")
             return
                 
+        # TODO: This is not necessarily anymore, it could be just an "anonymous" dict
         # Initialize or reinitialize the client entry always 
         self.averages[client_id] = {}
         
