@@ -168,7 +168,6 @@ class Worker:
             logging.info(f"Received empty data batch for client {client_id}")
             return
         
-        logging.info(f"Updating movie data for client {client_id} with data: {data}")
         for movie in data:
             movie_id = movie.get('id')
             if movie_id is None:
