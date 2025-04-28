@@ -19,7 +19,6 @@ load_dotenv()
 MOVIES_ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE_MOVIES")
 CREDITS_ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE_CREDITS")
 EOF_MARKER = os.getenv("EOF_MARKER", "EOF_MARKER")
-MOVIES_KEY="movies"
 
 # Router configuration
 ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
@@ -199,15 +198,18 @@ class Worker:
                     # Save data indexed by client_id (assuming it can process multiple clients)
                     if client_id not in self.collected_data:
                         self.collected_data[client_id] = {}
-                        self.collected_data[client_id][MOVIES_KEY] = []
-                    self.collected_data[client_id][MOVIES_KEY].extend(data)
+                    for movie in data:
+                        movie_id = movie.get('id')
+                        movie_name = movie.get('name')
+                        if movie_id and movie_name:
+                            self.collected_data[client_id][movie_id] = movie_name
                     
                 # If this is the second queue, join with stored data and send result
                 elif self.current_queue_index == 1 and client_id in self.collected_data:
                     
                     # Join the data
                     joined_data = self._join_data(
-                        self.collected_data[client_id].get(MOVIES_KEY, []),
+                        self.collected_data[client_id],
                         data
                     )
                     
@@ -233,14 +235,15 @@ class Worker:
                 return []
                 
             # Create a dict to efficiently look up credits by movie ID
-            actors_count = {}
+            actors = []
             for credits in credits_data:
                 movie_id = credits.get("movie_id")
                 if movie_id in movies_data:
                     for actor in credits.get("cast"):
-                        actors_count[actor] = actors_count.get(actor, 0) + 1
-            
-            return actors_count
+                        actors.append({
+                            "name": actor
+                        })
+            return actors
             
         except Exception as e:
             logging.error(f"Error joining data: {e}")

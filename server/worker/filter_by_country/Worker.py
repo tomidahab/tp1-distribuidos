@@ -186,7 +186,10 @@ class Worker:
         projected_data = []
         for record in data:
             if 'id' in record:
-                projected_data.append(record['id'])
+                projected_data.append({
+                    "id": record.get("id", ""),
+                    "name": record.get("original_title", ""),
+                })
 
         return projected_data
 

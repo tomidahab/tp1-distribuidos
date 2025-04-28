@@ -143,16 +143,14 @@ class Worker:
                     # Clean up client data after sending
                     del self.client_data[client_id]
                     logging.info(f"Sent top actors for client {client_id} and cleaned up")
-                    return
                 else:
                     logging.warning(f"Received EOF for client {client_id} but no data found")
-            if data:
+            elif data:
                 # Update actors counts for this client
                 self._update_actors_data(client_id, data)
             else:
                 logging.warning(f"Received message with no data for client {client_id}")
             
-            # Acknowledge message
             await message.ack()
             
         except Exception as e:
@@ -162,48 +160,37 @@ class Worker:
     
     
     def _update_actors_data(self, client_id, data):
-        """Update the actors count data for a specific client"""
-        if not isinstance(data, dict):
-            logging.warning(f"Expected dict data for client {client_id}, got {type(data)}")
-            return        
-        
-        # Calculate top n from this batch
-        batch_top_n = self._calculate_top_n(data)
-        
-        # If client doesn't exist yet, just store this batch's top n
+        """
+        Update the actors count data for a specific client
+        Store counts for ALL actors, not just top_n
+        """
         if client_id not in self.client_data:
-            self.client_data[client_id] = batch_top_n
-            return
+            self.client_data[client_id] = defaultdict(int)
+        for actor_data in data:
+            name = actor_data.get("name")
+            count = actor_data.get("count", 0)
+            if name:
+                self.client_data[client_id][name] += count
+            else:
+                logging.warning(f"Received actor data without name for client {client_id}, skipping")
+    
         
-        # Merge existing top n with new batch's top n
-        merged_data = {}
-        
-        # Add existing top n
-        for actor, count in self.client_data[client_id].items():
-            merged_data[actor] = count
-        
-        # Add new batch's top n, summing if actor already exists
-        for actor, count in batch_top_n.items():
-            merged_data[actor] = merged_data.get(actor, 0) + count
-        
-        self.client_data[client_id] = self._calculate_top_n(merged_data)
-        
-    def _calculate_top_n(self, data):
-        """Calculate top n actors from a dictionary of actor counts"""
-        top_actors = heapq.nlargest(self.top_n, data.items(), key=lambda x: x[1])
-        return dict(top_actors)
-
     def _get_top_actors(self, client_id):
-        """Get the top actors for a specific client in the required format"""
+        """
+        Calculate and return the top N actors for a client
+        Only called when EOF is received
+        """
         if client_id not in self.client_data:
             return []
         
-        # The data is already the top n, just convert to the right format
-        actors_data = self.client_data[client_id]
-        # Sort by count in descending order
-        sorted_actors = sorted(actors_data.items(), key=lambda x: x[1], reverse=True)[:self.top_n]
+        # Get all actor counts for this client
+        actor_counts = self.client_data[client_id]
         
-        return [{"name": actor, "count": count} for actor, count in sorted_actors]
+        # Use heapq to get the top N actors
+        top_actors = heapq.nlargest(self.top_n, actor_counts.items(), key=lambda x: x[1])
+        
+        # Format the result as a list of dictionaries
+        return [{"name": actor, "count": count} for actor, count in top_actors]
     
     async def send_response(self, client_id, data, queue_name=None, eof_marker=False, query=None):
         """Send data to the specified response queue"""

@@ -125,24 +125,29 @@ class Worker:
     async def _process_message(self, message):
         """Process a message"""
         try:
-            # Deserialize the message
             deserialized_message = Serializer.deserialize(message.body)
-            
-            # Extract client_id, data, and query from the deserialized message
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
-            query = deserialized_message.get("query")
             eof_marker = deserialized_message.get("EOF_MARKER")
             if eof_marker:
                 logging.info(f"EOF marker received for client_id '{client_id}'")
-                await self.send_data(client_id, self.averages, False, query)
-                await self.send_data(client_id, [], True, query)
-                await message.ack()
-                return
-
-            if data:
+                await self.send_data(client_id, data, True)
+            elif data:
                 self._update_averages(client_id, data)
-
+                # Transform dict of movies into a list of dicts with ID included
+                transformed_data = [
+                    {
+                        "id": movie_id,
+                        "name": movie_data["name"],
+                        "sum": movie_data["sum"],
+                        "count": movie_data["count"]
+                    }
+                    for movie_id, movie_data in self.averages[client_id].items()
+                ]
+                # Send the updated averages to the producer queue
+                await self.send_data(client_id, transformed_data)
+            else:
+                logging.warning(f"\033[93mReceived message without data for client_id '{client_id}'\033[0m")
             await message.ack()
             
         except Exception as e:
@@ -162,43 +167,36 @@ class Worker:
             logging.warning(f"Received empty data batch")
             return
                 
+        # Initialize or reinitialize the client entry always 
+        self.averages[client_id] = {}
+        
+        client_movies = self.averages[client_id]
+        
         # Process each movie in the new batch
         for movie in data:
             movie_id = movie.get('id')
+            movie_name = movie.get('name')
             if not movie_id:
                 logging.warning("Found movie entry without ID, skipping")
                 continue
                 
+            # Initialize movie entry if it doesn't exist
+            if movie_id not in client_movies:
+                client_movies[movie_id] = {
+                    'name': movie_name,
+                    'sum': 0,
+                    'count': 0
+                }
+                
             # Extract data from the movie entry
-            new_sum = movie.get('sum', 0)
-            new_count = movie.get('count', 0)
-            
-            if new_count <= 0 or new_sum <= 0:
-                logging.warning(f"Movie {movie_id} has invalid count: {new_count} and/or sum: {new_sum}, skipping")
-                continue
-            
-            # If this is a new movie, initialize its entry
-            if movie_id not in self.averages:
-                self.averages[movie_id] = {
-                    'sum': new_sum,
-                    'count': new_count,
-                    'avg': new_sum / new_count
-                }
-            else:
-                # Update existing movie data
-                existing_sum = self.averages[movie_id]['sum']
-                existing_count = self.averages[movie_id]['count']
-                
-                # Calculate new total sum and count
-                total_sum = existing_sum + new_sum
-                total_count = existing_count + new_count
-                
-                # Update the movie's entry
-                self.averages[movie_id] = {
-                    'sum': total_sum,
-                    'count': total_count,
-                    'avg': total_sum / total_count
-                }
+            new_sum = client_movies[movie_id]['sum'] + movie.get('rating', 0)
+            new_count = client_movies[movie_id]['count'] + 1
+
+            self.averages[client_id][movie_id] = {
+                'name': movie_name,
+                'sum': new_sum,
+                'count': new_count
+            }
 
 
     async def send_data(self, client_id, data, eof_marker=False, query=None):

@@ -38,8 +38,8 @@ class Worker:
         self.exchange_type_producer = exchange_type_producer
         self.rabbitmq = RabbitMQClient()
         
-        self.client_data = {}
-        
+        self.client_data = defaultdict(dict)
+
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
         signal.signal(signal.SIGTERM, self._handle_shutdown)
@@ -123,7 +123,7 @@ class Worker:
         return True
     
     async def _process_message(self, message):
-        """Process a message and update max/min movies for the client"""
+        """Process a message and update movies data for the client"""
         try:
             # Deserialize the message
             deserialized_message = Serializer.deserialize(message.body)
@@ -141,26 +141,24 @@ class Worker:
                     # Clean up client data after sending
                     del self.client_data[client_id]
                     logging.info(f"\033[92mSent max/min ratings for client {client_id} and cleaned up\033[0m")
-                    return
                 else:
                     logging.warning(f"Received EOF for client {client_id} but no data found")
-            if data:
-                self._update_max_min(client_id, data)
+            elif data:
+                self._update_movie_data(client_id, data)
             else:
                 logging.warning(f"Received message with no data for client {client_id}")
             
-            # Acknowledge message
             await message.ack()
             
         except Exception as e:
             logging.error(f"Error processing message: {e}")
             # Reject the message and requeue it
             await message.reject(requeue=True)
+
     
-    
-    def _update_max_min(self, client_id, data):
+    def _update_movie_data(self, client_id, data):
         """
-        Update the max and min ratings for a client based on new movie data
+        Update the movie data for a client
         
         Args:
             client_id (str): Client identifier
@@ -170,70 +168,35 @@ class Worker:
             logging.info(f"Received empty data batch for client {client_id}")
             return
         
-        # Initialize client data structure if this is the first data for this client
-        if client_id not in self.client_data:
-            self.client_data[client_id] = {
-                'max': None,
-                'min': None
-            }
-                
-        # Handle both dictionary format and list format
-        if isinstance(data, dict):
-            # Process data in dictionary format where keys are movie IDs
-            for movie_id, movie_data in data.items():
-                avg_rating = movie_data.get('avg')
-                
-                if avg_rating is None:
-                    logging.warning(f"Skipping movie {movie_id} with missing avg rating")
-                    continue
-                    
-                current_max = self.client_data[client_id]['max']
-                current_min = self.client_data[client_id]['min']
-                
-                # Update max if this is the first movie or if this rating is higher
-                if current_max is None or avg_rating > current_max['avg']:
-                    self.client_data[client_id]['max'] = {
-                        'id': movie_id,
-                        'avg': avg_rating
-                    }
-                    
-                # Update min if this is the first movie or if this rating is lower
-                if current_min is None or avg_rating < current_min['avg']:
-                    self.client_data[client_id]['min'] = {
-                        'id': movie_id,
-                        'avg': avg_rating
-                    }
-        else:
-            # Process data in list format where each item is a movie object
-            for movie in data:
-                movie_id = movie.get('id')
-                avg_rating = movie.get('avg')
-                
-                if movie_id is None or avg_rating is None:
-                    logging.warning(f"Skipping movie with missing id or avg: {movie}")
-                    continue
-                    
-                current_max = self.client_data[client_id]['max']
-                current_min = self.client_data[client_id]['min']
-                
-                # Update max if this is the first movie or if this rating is higher
-                if current_max is None or avg_rating > current_max['avg']:
-                    self.client_data[client_id]['max'] = {
-                        'id': movie_id,
-                        'avg': avg_rating
-                    }
-                    
-                # Update min if this is the first movie or if this rating is lower
-                if current_min is None or avg_rating < current_min['avg']:
-                    self.client_data[client_id]['min'] = {
-                        'id': movie_id,
-                        'avg': avg_rating
-                    }
-        
+        logging.info(f"Updating movie data for client {client_id} with data: {data}")
+        for movie in data:
+            movie_id = movie.get('id')
+            if movie_id is None:
+                logging.warning(f"\033[93mSkipping movie with missing id: {movie}\033[0m")
+                continue
+            if movie.get('count', 0) <= 0 or movie.get('sum', 0) <= 0:
+                logging.warning(f"\033[93mSkipping movie with zero count or zero sum or empty values: {movie}\033[0m")
+                continue
+
+            # Initialize client data if not present
+            if client_id not in self.client_data:
+                self.client_data[client_id] = {}
+
+            # Initialize movie data if not present
+            if movie_id not in self.client_data[client_id]:
+                self.client_data[client_id][movie_id] = {
+                    'sum': 0,
+                    'count': 0,
+                    'name': movie.get('name', '')
+                }
+            # Update the sum and count
+            self.client_data[client_id][movie_id]['sum'] += movie.get('sum')
+            self.client_data[client_id][movie_id]['count'] += movie.get('count')
+            self.client_data[client_id][movie_id]['avg'] = self.client_data[client_id][movie_id]['sum'] / self.client_data[client_id][movie_id]['count']
 
     def _get_max_min(self, client_id):
         """
-        Get the movies with max and min ratings for a client
+        Calculate and get the movies with max and min ratings for a client
         
         Args:
             client_id (str): Client identifier
@@ -241,13 +204,40 @@ class Worker:
         Returns:
             dict: Dictionary with max and min movie entries
         """
-        if client_id not in self.client_data:
+        if client_id not in self.client_data or not self.client_data[client_id]:
             logging.warning(f"No data found for client {client_id}")
-            return {}
+            return {'max': None, 'min': None}
+        
+        max_movie = None
+        min_movie = None
+        max_avg = -float('inf')
+        min_avg = float('inf')
+        
+        # Find max and min from all stored movies
+        for movie_id, movie_data in self.client_data[client_id].items():
+            avg_rating = movie_data.get('avg', 0)
+            
+            # Update max if this rating is higher
+            if avg_rating > max_avg:
+                max_avg = avg_rating
+                max_movie = {
+                    'id': movie_id,
+                    'avg': avg_rating,
+                    'name': movie_data.get('name', '')
+                }
+                
+            # Update min if this rating is lower
+            if avg_rating < min_avg:
+                min_avg = avg_rating
+                min_movie = {
+                    'id': movie_id,
+                    'avg': avg_rating,
+                    'name': movie_data.get('name', '')
+                }
         
         result = {
-            'max': self.client_data[client_id]['max'],
-            'min': self.client_data[client_id]['min']
+            'max': max_movie,
+            'min': min_movie
         }
         
         return result

@@ -19,7 +19,6 @@ load_dotenv()
 MOVIES_ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE_MOVIES")
 RATINGS_ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE_RATINGS")
 EOF_MARKER = os.getenv("EOF_MARKER", "EOF_MARKER")
-MOVIES_KEY="movies"
 
 # Router configuration
 ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
@@ -199,16 +198,18 @@ class Worker:
                     # Save data indexed by client_id (assuming it can process multiple clients)
                     if client_id not in self.collected_data:
                         self.collected_data[client_id] = {}
-                        # TODO: change this to a dict/set instead of a list
-                        self.collected_data[client_id][MOVIES_KEY] = []
-                    self.collected_data[client_id][MOVIES_KEY].extend(data)
+                    for movie in data:
+                        movie_id = movie.get('id')
+                        movie_name = movie.get('name')
+                        if movie_id and movie_name:
+                            self.collected_data[client_id][movie_id] = movie_name
                     
                 # If this is the second queue, join with stored data and send result
                 elif self.current_queue_index == 1 and client_id in self.collected_data:
                     
                     # Join the data
                     joined_data = self._join_data(
-                        self.collected_data[client_id].get(MOVIES_KEY, []),
+                        self.collected_data[client_id],
                         data
                     )
                     if joined_data:
@@ -240,10 +241,10 @@ class Worker:
                 return []
 
             # Create a set of movie ids from movies_data for efficient lookup
-            movie_ids = set(movies_data)
+            movie_ids = set(movies_data.keys())
             
             # Dictionary to track sum and count of ratings for each movie
-            rating_stats = {}
+            movies_with_ratings = []
             
             # Process each rating, adding it to our stats if the movie is in our dataset
             for rating in ratings_data:
@@ -251,28 +252,16 @@ class Worker:
                 if movie_id and movie_id in movie_ids:
                     try:
                         rating_value = float(rating.get('rating', 0))
-                        
-                        if movie_id not in rating_stats:
-                            rating_stats[movie_id] = {'sum': 0, 'count': 0}
-                        
-                        rating_stats[movie_id]['sum'] += rating_value
-                        rating_stats[movie_id]['count'] += 1
+                        if rating_value > 0:
+                            movies_with_ratings.append({
+                                'id': movie_id,
+                                'name': movies_data[movie_id],
+                                'rating': rating_value
+                            })
                     except (ValueError, TypeError):
                         logging.warning(f"Skipping invalid rating value for movie {movie_id}")
             
-            # Calculate averages and create result list
-            results = []
-            for movie_id, stats in rating_stats.items():
-                if stats['count'] > 0 and stats['sum'] > 0:
-                    avg_rating = stats['sum'] / stats['count']
-                    results.append({
-                        "id": movie_id,
-                        "avg": round(avg_rating, 2),
-                        "sum": stats['sum'],
-                        "count": stats['count']
-                    })
-            
-            return results
+            return movies_with_ratings
             
         except Exception as e:
             logging.error(f"Error joining data: {e}")
