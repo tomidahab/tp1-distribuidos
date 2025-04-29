@@ -19,18 +19,17 @@ load_dotenv()
 
 # Constants
 ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE")
-RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
+ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE",)
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "top_actors_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
 TOP_N = int(os.getenv("TOP_N", 10))
-QUERY_4 = os.getenv("QUERY_4", "4")
 
 class Worker:
     def __init__(self, 
                  consumer_queue_name=ROUTER_CONSUME_QUEUE, 
                  exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
                  exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
-                 producer_queue_name=[RESPONSE_QUEUE]):
+                 producer_queue_name=[ROUTER_PRODUCER_QUEUE]):
 
         self._running = True
         self.consumer_queue_name = consumer_queue_name
@@ -136,10 +135,11 @@ class Worker:
             eof_marker = deserialized_message.get("EOF_MARKER", False)
             
             if eof_marker:
-                # If we have data for this client, send it to response queue
+                # If we have data for this client, send it to router producer queue
                 if client_id in self.client_data:
                     top_actors = self._get_top_actors(client_id)
-                    await self.send_response(client_id, top_actors, self.producer_queue_name[0], True, QUERY_4)
+                    await self._send_data(client_id, top_actors, self.producer_queue_name[0])
+                    await self._send_data(client_id, [], self.producer_queue_name[0], True)
                     # Clean up client data after sending
                     del self.client_data[client_id]
                     logging.info(f"Sent top actors for client {client_id} and cleaned up")
@@ -192,8 +192,8 @@ class Worker:
         # Format the result as a list of dictionaries
         return [{"name": actor, "count": count} for actor, count in top_actors]
     
-    async def send_response(self, client_id, data, queue_name=None, eof_marker=False, query=None):
-        """Send data to the specified response queue"""
+    async def _send_data(self, client_id, data, queue_name=None, eof_marker=False, query=None):
+        """Send data to the specified router producer queue"""
         if queue_name is None:
             queue_name = self.producer_queue_name[0]
             
