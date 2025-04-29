@@ -6,7 +6,6 @@ from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
 from dotenv import load_dotenv
 import heapq
-from collections import defaultdict
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,7 +18,7 @@ load_dotenv()
 
 # Constants
 ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE")
-ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE",)
+RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE",)
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "top_actors_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
 TOP_N = int(os.getenv("TOP_N", 10))
@@ -30,7 +29,7 @@ class Worker:
                  consumer_queue_name=ROUTER_CONSUME_QUEUE, 
                  exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
                  exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
-                 producer_queue_name=[ROUTER_PRODUCER_QUEUE]):
+                 producer_queue_name=[RESPONSE_QUEUE]):
 
         self._running = True
         self.consumer_queue_name = consumer_queue_name
