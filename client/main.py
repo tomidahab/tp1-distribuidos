@@ -1,12 +1,15 @@
 from Client import Client
 import logging
 from Config import Config
-import time
+import os
+import time 
 
 logging.basicConfig(level=logging.INFO)
 
+CLIENT_ID = os.getenv("CLIENT_ID")
+
 def main():
-    client = Client(name="John_Doe", age=30)
+    client = Client(name=CLIENT_ID)
     config = Config()
     try:
         client.connect(config.get_host(), config.get_port())

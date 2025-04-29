@@ -1,5 +1,5 @@
 services:
-  client:
+  client_1:
     env_file:
       - ./client/.env
     build: ./client
@@ -7,6 +7,19 @@ services:
       - boundary
     volumes:
       - ./client:/app
+    environment:
+      - CLIENT_ID=client_1
+
+  client_2:
+    env_file:
+      - ./client/.env
+    build: ./client
+    depends_on:
+      - boundary
+    volumes:
+      - ./client:/app
+    environment:
+      - CLIENT_ID=client_2
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -259,7 +272,7 @@ services:
     environment:
       - NUMBER_OF_PRODUCER_WORKERS=1
       - INPUT_QUEUE=max_min_router
-      - OUTPUT_QUEUES=[["max_min_worker_1"]]
+      - OUTPUT_QUEUES=[["max_min_worker_1"],["max_min_worker_2"]]
       - BALANCER_TYPE=shard_by_ascii
     depends_on:
       - rabbitmq
@@ -284,6 +297,22 @@ services:
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
 
+  max_min_worker_2:
+    build:
+      context: ./server
+      dockerfile: worker/max_min/Dockerfile
+    env_file:
+      - ./server/worker/max_min/.env
+    environment:
+      - ROUTER_CONSUME_QUEUE=max_min_worker_2
+      - ROUTER_PRODUCER_QUEUE=max_min_collector_router
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/worker/max_min:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+
   max_min_collector_router:
     build:
       context: ./server
@@ -291,7 +320,7 @@ services:
     env_file:
       - ./server/router/.env
     environment:
-      - NUMBER_OF_PRODUCER_WORKERS=1
+      - NUMBER_OF_PRODUCER_WORKERS=2
       - INPUT_QUEUE=max_min_collector_router
       - OUTPUT_QUEUES=collector_max_min_worker
       - BALANCER_TYPE=round_robin
@@ -436,7 +465,7 @@ services:
     environment:
       - NUMBER_OF_PRODUCER_WORKERS=4
       - INPUT_QUEUE=top_router
-      - OUTPUT_QUEUES=[["top_worker_1"]]
+      - OUTPUT_QUEUES=[["top_worker_1"],["top_worker_2"]]
       - BALANCER_TYPE=shard_by_ascii
     depends_on:
       - rabbitmq
@@ -461,6 +490,22 @@ services:
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
 
+  top_worker_2:
+    build:
+      context: ./server
+      dockerfile: worker/top/Dockerfile
+    env_file:
+      - ./server/worker/top/.env
+    environment:
+      - ROUTER_CONSUME_QUEUE=top_worker_2
+      - ROUTER_PRODUCER_QUEUE=top_10_actors_collector_router
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/worker/top:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+
   top_10_actors_collector_router:
     build:
       context: ./server
@@ -468,7 +513,7 @@ services:
     env_file:
       - ./server/router/.env
     environment:
-      - NUMBER_OF_PRODUCER_WORKERS=1
+      - NUMBER_OF_PRODUCER_WORKERS=2
       - INPUT_QUEUE=top_10_actors_collector_router
       - OUTPUT_QUEUES=collector_top_10_actors_worker
       - BALANCER_TYPE=round_robin
