@@ -6,6 +6,8 @@ from datetime import datetime
 from Protocol import Protocol
 import logging
 from Config import Config
+import sys
+import signal
 
 
 logging.basicConfig(level=logging.INFO)
@@ -16,6 +18,7 @@ QUERY_2 = os.getenv("QUERY_2", "2")
 QUERY_3 = os.getenv("QUERY_3", "3")
 QUERY_4 = os.getenv("QUERY_4", "4")
 QUERY_5 = os.getenv("QUERY_5", "5")
+SIGTERM = "SIGTERM"
 
 class Client:
     def __init__(self, name: str, age: int):
@@ -31,6 +34,8 @@ class Client:
         self.output_file_q3 = f"output/output_records_client_{self.name}_Q3.json"
         self.output_file_q4 = f"output/output_records_client_{self.name}_Q4.json"
         self.output_file_q5 = f"output/output_records_client_{self.name}_Q5.json"
+
+        signal.signal(signal.SIGTERM, self._handle_sigterm)
         
     def __str__(self):
         return f"Client(name={self.name}, age={self.age})"
@@ -222,3 +227,19 @@ class Client:
             }
             formatted_data.append(formatted_movie)
         return formatted_data
+
+    def _handle_sigterm(self, signum, frame):
+        """
+        Handle SIGTERM signal gracefully.
+        """
+        logging.info("Received SIGTERM, sending shutdown signal to server...")
+        if self.skt:
+            try:
+                self.protocol.send_all(self.skt, SIGTERM)
+                logging.info("SIGTERM message sent to server")
+            except Exception as e:
+                logging.error(f"Error sending SIGTERM message: {e}")
+
+        self.shutdown()
+        logging.info("Client shutdown successfully after SIGTERM")
+        sys.exit(0) 

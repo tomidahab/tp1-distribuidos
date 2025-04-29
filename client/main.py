@@ -1,3 +1,4 @@
+import signal
 from Client import Client
 import logging
 from Config import Config
@@ -28,6 +29,9 @@ def main():
         # Start sender thread and get the thread object
         sender_thread = client.start_sender_thread(files_to_send)
         
+
+        client._handle_sigterm(signal.SIGTERM, None)
+
         # Wait for sender to finish
         sender_thread.join()
         logging.info("Sender completed. Receiver still active. Press Ctrl+C to exit.")

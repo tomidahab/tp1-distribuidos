@@ -39,6 +39,9 @@ MOVIES_CSV = 0
 CREDITS_CSV = 1
 RATINGS_CSV = 2
 
+SIGTERM = "SIGTERM"
+SIGTERM_QUEUE = "sigterm_queue"
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-8s %(message)s",
@@ -200,6 +203,11 @@ class Boundary:
                     csvs_received += 1
                     logging.info(self.green(f"EOF received for CSV #{csvs_received} from client {addr[0]}:{addr[1]}"))
                     continue
+                elif data == SIGTERM:
+                    logging.info("received SIGTERM")
+                    await self._send_sigterm(5, client_id)
+                    #Here send to the 5 nodes the sigterm
+                    return
 
                 if csvs_received == MOVIES_CSV:
                     filtered_data_q1,filtered_data_q2, filtered_data_q5 = self._project_to_columns(data, [COLUMNS_Q1,COLUMNS_Q2, COLUMNS_Q5])
@@ -253,6 +261,11 @@ class Boundary:
             await self._send_data_to_rabbitmq_queue(prepared_data, self.credits_router_queue)
         elif csvs_received == RATINGS_CSV:
            await self._send_data_to_rabbitmq_queue(prepared_data, self.ratings_router_queue)
+
+  async def _send_sigterm(self, n, client_id):
+        prepared_data = self._addMetaData(client_id, SIGTERM, False)
+        for i in range(0,n):
+            await self._send_data_to_rabbitmq_queue(prepared_data, SIGTERM_QUEUE)
 
   def _remove_ratings_with_0_rating(self, data):
     """
@@ -418,6 +431,7 @@ class Boundary:
     await self.rabbitmq.declare_queue(self.credits_router_queue, durable=True)
     await self.rabbitmq.declare_queue(self.ratings_router_queue, durable=True)
     await self.rabbitmq.declare_queue(RESPONSE_QUEUE, durable=True)
+    await self.rabbitmq.declare_queue(SIGTERM_QUEUE, durable=True)
     
     logging.info("All router queues declared successfully")
   

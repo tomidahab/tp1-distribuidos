@@ -27,7 +27,8 @@ NAME = "name"
 EOF_MARKER = "EOF_MARKER"
 RESPONSE_QUEUE = "top_5_budget_queue"
 
-
+SIGTERM = "SIGTERM"
+SIGTERM_QUEUE = "sigterm_queue"
 
 class Worker:
     def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[BOUNDARY_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[RESPONSE_QUEUE]):
@@ -123,6 +124,16 @@ class Worker:
             if not success:
                 logging.error(f"Failed to set up consumer for queue '{queue_name}'")
                 return False
+            
+        #Set up SIGTERM QUEUE
+        success = await self.rabbitmq.consume(
+            queue_name=queue_name,
+            callback=self._receive_sigterm,
+            no_ack=False
+        )
+        if not success:
+            logging.error(f"Failed to set up consumer for queue '{SIGTERM_QUEUE}'")
+            return False
 
         return True
     
@@ -135,7 +146,25 @@ class Worker:
         }
         return message
   
-    
+    async def _receive_sigterm(self, message):
+        try:
+            # Deserialize the message
+            deserialized_message = Serializer.deserialize(message.body)
+            
+            # Extract clientId and data from the deserialized message
+            client_id = deserialized_message.get("client_id")
+            data = deserialized_message.get("data")
+            if data == SIGTERM:
+                logging.info("received sigterm")
+
+                await self._send_sigterm(1,client_id)
+                self._handle_shutdown()
+
+            return
+        except Exception as e:
+            logging.error(f"Error processing message: {e}")
+            await message.reject(requeue=True)
+        
     async def _process_message(self, message):
         """Process a message from the queue"""
         try:
@@ -251,3 +280,9 @@ class Worker:
         # since this is called from a signal handler
         if hasattr(self, 'rabbitmq'):
             asyncio.create_task(self.rabbitmq.close())
+
+    async def _send_sigterm(self, n, client_id):
+        logging.info("sending sigterm")
+        prepared_data = self._addMetaData(client_id, SIGTERM, False)
+        for i in range(0,n):
+            await self._send_data_to_rabbitmq_queue(prepared_data, SIGTERM_QUEUE)
