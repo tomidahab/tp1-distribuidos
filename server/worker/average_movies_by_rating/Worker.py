@@ -129,9 +129,14 @@ class Worker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER")
+            sigterm = deserialized_message.get("SIGTERM")
             if eof_marker:
                 logging.info(f"EOF marker received for client_id '{client_id}'")
                 await self.send_data(client_id, data, True)
+            if sigterm:
+                logging.info(f"SIGTERM marker received for client_id '{client_id}'")
+                await self.send_data(client_id, data, False,True)
+
             elif data:
                 self._update_averages(client_id, data)
                 # Transform dict of movies into a list of dicts with ID included
@@ -201,9 +206,9 @@ class Worker:
             }
 
 
-    async def send_data(self, client_id, data, eof_marker=False, query=None):
+    async def send_data(self, client_id, data, eof_marker=False, sigterm_marker=False, query=None):
         """Send data to the router queue with query in metadata"""
-        message = self._add_metadata(client_id, data, eof_marker, query)
+        message = self._add_metadata(client_id, data, eof_marker, sigterm_marker, query)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
             routing_key=self.producer_queue_names[0],
@@ -215,13 +220,14 @@ class Worker:
 
 
     #TODO: move _add_metadata to Serializer
-    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+    def _add_metadata(self, client_id, data, eof_marker=False, sigterm_marker = False, query=None):
         """Add metadata to the message"""
         message = {        
             "client_id": client_id,
             "EOF_MARKER": eof_marker,
             "data": data,
-            "query": query
+            "query": query,
+            "SIGTERM": sigterm_marker,
         }
         return message
 

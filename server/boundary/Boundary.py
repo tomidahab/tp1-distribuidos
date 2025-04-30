@@ -25,6 +25,7 @@ COLUMNS_Q3 = {'id': 1, 'rating': 2}
 COLUMNS_Q4 = {"cast": 0, "movie_id": 2}
 COLUMNS_Q5 = {'budget': 2, 'imdb_id':6, 'original_title': 8, 'overview': 9, 'revenue': 15}
 EOF_MARKER = "EOF_MARKER"
+SIGTERM = "SIGTERM"
 
 RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
 MAX_CSVS = 3
@@ -185,10 +186,16 @@ class Boundary:
             try:
                 data = await self._receive_csv_batch(sock, proto)
                 if data == EOF_MARKER:
-                    await self._send_eof_marker(csvs_received, client_id)
+                    await self._send_marker(csvs_received, client_id, True)
                     csvs_received += 1
                     logging.info(self.green(f"EOF received for CSV #{csvs_received} from client {addr[0]}:{addr[1]}"))
                     continue
+                elif data == SIGTERM:
+                    await self._send_marker(csvs_received, client_id, False)
+                    sigterms += 1
+                    logging.info(self.green(f"SIGTERM received from client {addr[0]}:{addr[1]}"))
+                    sock.close()
+                    return
 
                 if csvs_received == MOVIES_CSV:
                     filtered_data_q1, filtered_data_q5 = self._project_to_columns(data, [COLUMNS_Q1, COLUMNS_Q5])
@@ -223,8 +230,8 @@ class Boundary:
         logging.error(f"Client {addr[0]}:{addr[1]} error: {exc}")
         logging.exception(exc)
 
-  async def _send_eof_marker(self, csvs_received, client_id):
-        prepared_data = self._addMetaData(client_id, None, True)
+  async def _send_marker(self, csvs_received, client_id, isEOF): #isEOF for defining EOF or SIGTERM
+        prepared_data = self._addMetaData(client_id, None, isEOF, not isEOF)
         if csvs_received == MOVIES_CSV:
            await self._send_data_to_rabbitmq_queue(prepared_data, self.movies_router_queue)
            #TODO: change it so instead of sending to the sentiment analysis worker, it sends to the movies router
@@ -360,11 +367,12 @@ class Boundary:
         
         return result
   
-  def _addMetaData(self, client_id, data, is_eof_marker=False):
+  def _addMetaData(self, client_id, data, is_eof_marker=False, is_sigterm=False):
     message = {        
       "client_id": client_id,
       "data": data,
-      "EOF_MARKER": is_eof_marker
+      "EOF_MARKER": is_eof_marker,
+      "SIGTERM": is_sigterm
     }
     return message
   

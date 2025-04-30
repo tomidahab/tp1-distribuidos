@@ -133,6 +133,7 @@ class Worker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER", False)
+            sigterm = deserialized_message.get("SIGTERM", False)
             
             if eof_marker:
                 # If we have data for this client, send it to router producer queue
@@ -144,6 +145,16 @@ class Worker:
                     logging.info(f"Sent top 10 actors for client {client_id} and cleaned up COLLECTOR")
                 else:
                     logging.warning(f"Received EOF for client {client_id} but no data found")
+            elif sigterm:
+                response_message = self._add_metadata(client_id, "", False, True, QUERY_3)
+                logging.info(f"received sigterm from :{client_id}")
+
+                await self.rabbitmq.publish_to_queue(
+                    queue_name=self.producer_queue_name[0],
+                    message=Serializer.serialize(response_message),
+                    persistent=True
+                )
+                self._handle_shutdown()
             elif data:
                 # Update actors counts for this client
                 self._update_top_actors(client_id, data)
@@ -212,7 +223,7 @@ class Worker:
         if queue_name is None:
             queue_name = self.producer_queue_name[0]
             
-        message = self._add_metadata(client_id, data, eof_marker, query)
+        message = self._add_metadata(client_id, data, eof_marker, False, query)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
             routing_key=queue_name,
@@ -223,13 +234,14 @@ class Worker:
         if not success:
             logging.error(f"Failed to send data to {queue_name} for client {client_id}")
 
-    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
-        """Prepare the message to be sent to the output queue"""
+    def _add_metadata(self, client_id, data, eof_marker=False, sigterm=False, query=None):
+        """Prepare the message to be sent to the output queue - standardized across workers"""
         message = {        
             "client_id": client_id,
             "data": data,
             "EOF_MARKER": eof_marker,
             "query": query,
+            "SIGTERM": sigterm
         }
         return message
         

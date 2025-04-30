@@ -132,10 +132,14 @@ class Worker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             query = deserialized_message.get("query")
+            sigterm = deserialized_message.get("SIGTERM")
             eof_marker = deserialized_message.get("EOF_MARKER")
             if eof_marker:
                 logging.info(f"EOF marker received for client_id '{client_id}'")
-                await self.send_data(client_id, data, True, query)
+                await self.send_data(client_id, data, True, False, query)
+            elif sigterm:
+                logging.info(f"SIGTERM marker received for client_id '{client_id}'")
+                await self.send_data(client_id, data, False, True, query)
             elif data:
                 # TODO: This is not necessarily anymore, it could be just an "anonymous" dict
                 self.participations[client_id] = {}
@@ -165,9 +169,9 @@ class Worker:
             parsed_data.append({"name": actor, "count": count})
         return parsed_data
 
-    async def send_data(self, client_id, data, eof_marker=False, query=None):
+    async def send_data(self, client_id, data, eof_marker=False, sigterm=False, query=None):
         """Send data to the router queue with query in metadata"""
-        message = self._add_metadata(client_id, data, eof_marker, query)
+        message = self._add_metadata(client_id, data, eof_marker, sigterm, query)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
             routing_key=self.producer_queue_names[0],
@@ -178,11 +182,12 @@ class Worker:
             logging.error(f"Failed to send data with query '{query}' to router queue")
 
     #TODO: move _add_metadata to Serializer
-    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+    def _add_metadata(self, client_id, data, eof_marker=False, sigterm=False, query=None):
         """Add metadata to the message"""
         message = {        
             "client_id": client_id,
             "EOF_MARKER": eof_marker,
+            "SIGTERM": sigterm,
             "data": data,
             "query": query
         }

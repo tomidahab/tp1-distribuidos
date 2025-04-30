@@ -95,6 +95,7 @@ class Worker:
             client_id = deserialized_message.get("clientId", deserialized_message.get("client_id"))
             data = deserialized_message.get("data", [])
             eof_marker = deserialized_message.get("EOF_MARKER", False)
+            sigterm = deserialized_message.get("SIGTERM", False)
             
             if eof_marker:
                 logging.info(f"Received EOF marker for client_id '{client_id}'")
@@ -124,7 +125,7 @@ class Worker:
                 }]
                 
                 # Use the _add_metadata function to prepare the response
-                response_message = self._add_metadata(client_id, result, True, QUERY_5)
+                response_message = self._add_metadata(client_id, result, True, False, QUERY_5)
                 
                 await self.rabbitmq.publish_to_queue(
                     queue_name=self.response_queue_name,
@@ -137,6 +138,18 @@ class Worker:
                     "POSITIVE": {"sum": 0, "count": 0},
                     "NEGATIVE": {"sum": 0, "count": 0}
                 }
+                
+                await message.ack()
+                return
+            
+            if sigterm: #TODO check if this is enough
+                response_message = self._add_metadata(client_id, result, False, True, QUERY_5)
+
+                await self.rabbitmq.publish_to_queue(
+                    queue_name=self.response_queue_name,
+                    message=Serializer.serialize(response_message),
+                    persistent=True
+                )
                 
                 await message.ack()
                 return
@@ -173,13 +186,14 @@ class Worker:
             logging.error(f"Error processing message: {e}")
             await message.reject(requeue=False)
     
-    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+    def _add_metadata(self, client_id, data, eof_marker=False, sigterm=False, query=None):
         """Prepare the message to be sent to the output queue - standardized across workers"""
         message = {        
             "client_id": client_id,
             "data": data,
             "EOF_MARKER": eof_marker,
             "query": query,
+            "SIGTERM": sigterm
         }
         return message
     

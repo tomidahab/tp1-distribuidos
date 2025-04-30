@@ -19,6 +19,7 @@ load_dotenv()
 MOVIES_ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE_MOVIES")
 RATINGS_ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE_RATINGS")
 EOF_MARKER = os.getenv("EOF_MARKER", "EOF_MARKER")
+SIGTERM = os.getenv("SIGTERM", "SIGTERM")
 
 # Router configuration
 ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
@@ -189,6 +190,7 @@ class Worker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER")
+            sigterm = deserialized_message.get("SIGTERM")
             # Check if this is an EOF marker message
             if eof_marker:
                 logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}' for current_queue_index {self.current_queue_index}\033[0m")
@@ -199,6 +201,21 @@ class Worker:
 
                 await message.ack()
                 await self._switch_to_next_queue()  # Switch to next queue
+                return
+            if sigterm:
+                logging.info(f"\033[93mReceived SIGTERM marker for client_id '{client_id}'\033[0m")
+                for queue in self.consumer_queue_names:
+                    message = self._add_metadata(client_id, data, False, True)
+                    await self.rabbitmq.publish(
+                        exchange_name=self.exchange_name_producer,
+                        routing_key=queue,
+                        message=Serializer.serialize(message),
+                        persistent=True
+                    )
+                    
+                del self.collected_data[client_id]
+
+                await message.ack()
                 return
             
             if data:
@@ -292,12 +309,13 @@ class Worker:
             logging.error(f"Error sending data to output queue: {e}")
             raise e
 
-    def _add_metadata(self, client_id, data, eof_marker, query=None):
-        """Prepare the message to be sent to the output queue"""
+    def _add_metadata(self, client_id, data, eof_marker=False, sigterm = False, query=None):
+        """Add metadata to the message"""
         message = {        
             "client_id": client_id,
-            "data": data,
             "EOF_MARKER": eof_marker,
+            "SIGTERM":sigterm,
+            "data": data,
             "query": query,
         }
         return message

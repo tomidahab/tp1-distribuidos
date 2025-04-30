@@ -221,3 +221,9 @@ class Client:
             }
             formatted_data.append(formatted_movie)
         return formatted_data
+
+    def send_sigterm(self):
+        if self.skt is None:
+            raise Exception("Socket not connected")
+        logging.info("Sending SIGTERM to server")
+        self.protocol.send_all(self.skt, self.config.get_SIGTERM())

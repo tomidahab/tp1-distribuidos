@@ -31,6 +31,7 @@ class Config:
         self.EOF = os.getenv("EOF_MARKER")
         if not self.EOF:
             raise ValueError("EOF_MARKER must be set in the environment")
+        self.SIGTERM = os.getenv("SIGTERM","SIGTERM")
         
         self._initialized = True
         
