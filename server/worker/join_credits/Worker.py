@@ -126,19 +126,17 @@ class Worker:
         if queue_name not in self.consumers:
             logging.info(f"Starting to consume from queue: {queue_name}")
             
-            # The consume method returns a consumer tag, store it
-            consumer_tag = await self.rabbitmq.consume(
+            success = await self.rabbitmq.consume(
                 queue_name=queue_name,
                 callback=self._process_message,
                 no_ack=False
             )
 
-            if not consumer_tag:
+            if not success:
                 logging.error(f"Failed to set up consumer for queue '{queue_name}'")
                 return False
                 
-            # Store the actual consumer tag returned by consume method
-            self.consumers[queue_name] = consumer_tag
+            self.consumers[queue_name] = True
             
             # Remove from paused queues if it was there
             if queue_name in self.paused_queues:
@@ -157,13 +155,10 @@ class Worker:
             self.paused_queues.add(current_queue)
             
             # Cancel the consumer for the current queue to stop consuming
+            await self.rabbitmq.cancel_consumer(current_queue)
+            
             if current_queue in self.consumers:
-                try:
-                    success = await self.rabbitmq.cancel_consumer(current_queue)
-                    if not success:
-                        logging.warning(f"Failed to cancel consumer for {current_queue}")
-                except Exception as e:
-                    logging.warning(f"Exception cancelling consumer for {current_queue}: {e}")
+                del self.consumers[current_queue]
             
             # Update index to next queue with wrap-around
             self.current_queue_index = (self.current_queue_index + 1) % len(self.consumer_queue_names)
@@ -171,15 +166,11 @@ class Worker:
             
             logging.info(f"Switching to queue: {next_queue}")
             
-            # Clear the consumers dictionary for this queue if needed
-            if current_queue in self.consumers:
-                del self.consumers[current_queue]
-            
             # Start consuming from the next queue
             await self._start_consuming_from_current_queue()
         except Exception as e:
             logging.error(f"Error switching to next queue: {e}")
-            # Don't raise the exception to avoid worker failure
+            raise e
     
     async def _process_message(self, message):
         """Process a message from the queue"""
