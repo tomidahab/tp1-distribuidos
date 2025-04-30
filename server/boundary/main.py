@@ -21,6 +21,7 @@ async def main():
     
     # Router queue names from environment variables
     movies_router_queue = os.getenv("MOVIES_ROUTER_QUEUE")
+    movies_router_q5_queue = os.getenv("MOVIES_ROUTER_Q5_QUEUE")
     credits_router_queue = os.getenv("CREDITS_ROUTER_QUEUE")
     ratings_router_queue = os.getenv("RATINGS_ROUTER_QUEUE")
 
@@ -29,6 +30,7 @@ async def main():
     while True:
         try:
             server = Boundary(port, 100, movies_router_queue, credits_router_queue, ratings_router_queue)
+            server.movies_router_q5_queue = movies_router_q5_queue
             await server.run()
             break
         except Exception as e:
