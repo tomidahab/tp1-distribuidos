@@ -22,6 +22,7 @@ async def main():
     producer_queue = os.getenv("ROUTER_PRODUCER_QUEUE")
     producer_exchange = os.getenv("PRODUCER_EXCHANGE", "filtered_data_exchange")
     producer_exchange_type = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
+    number_of_clients = int(os.getenv("NUMBER_OF_CLIENTS"))
     
     # Add retry logic for service initialization
     retry_count = 0
@@ -33,7 +34,8 @@ async def main():
                 consumer_queue_names=[movies_consumer_queue, ratings_consumer_queue],
                 producer_queue_name=producer_queue,
                 exchange_name_producer=producer_exchange,
-                exchange_type_producer=producer_exchange_type
+                exchange_type_producer=producer_exchange_type,
+                number_of_clients=number_of_clients,
             )
             
             success = await worker.run()
