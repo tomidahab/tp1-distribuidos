@@ -6,7 +6,7 @@ from common.Serializer import Serializer
 from load_balancer.factory import create_balancer
 
 class RouterWorker:
-    def __init__(self, number_of_producer_workers, input_queue, output_queues, exchange_name, exchange_type="direct", balancer_type="roundrobin"):
+    def __init__(self, number_of_producer_workers, input_queue, output_queues, exchange_name, exchange_type="direct", balancer_type="shard_by_ascii"):
         """Initialize the router worker
         
         Args:
@@ -15,7 +15,7 @@ class RouterWorker:
             output_queues (list): List of queue names to distribute messages to
             exchange_name (str): Name of the exchange to publish messages to
             exchange_type (str): Type of exchange to use
-            balancer_type (str): Type of load balancer to use (e.g., "roundrobin")
+            balancer_type (str): Type of load balancer to use (e.g., "shard_by_ascii"):
         """
         self.number_of_producer_workers = number_of_producer_workers
         self.input_queue = input_queue
@@ -33,6 +33,28 @@ class RouterWorker:
         
         logging.info(f"Router worker initialized with input: {input_queue}, outputs: {output_queues}, exchange: {exchange_name}")
         
+
+    def _get_all_queue_names(self):
+        """Get all queue names from the output_queues structure, flattening if needed"""
+        if not self.output_queues:
+            return []
+            
+        if isinstance(self.output_queues, str):
+            return [self.output_queues]
+            
+        if not isinstance(self.output_queues[0], list):
+            return self.output_queues
+            
+        # Flatten nested structure
+        all_queues = []
+        for shard in self.output_queues:
+            if isinstance(shard, list):
+                all_queues.extend(shard)
+            else:
+                all_queues.append(shard)
+                
+        return all_queues
+
     async def _setup(self, retry_count=1):
         """Setup connections, exchanges, and declare queues with retry mechanism
         
@@ -67,9 +89,10 @@ class RouterWorker:
                 logging.error(f"Failed to declare exchange '{self.exchange_name}'")
                 return False
                 
-            # Declare and bind all output queues
-            for queue_name in self.output_queues:
+                # Declare and bind all output queues
+            for queue_name in self._get_all_queue_names():
                 queue = await self.rabbit_client.declare_queue(queue_name, durable=True)
+
                 if not queue:
                     logging.error(f"Failed to declare output queue '{queue_name}'")
                     return False
@@ -115,20 +138,16 @@ class RouterWorker:
                 await message.ack()
                 return
 
+            # Handle EOF marker specially - we need to count them and possibly send to all queues
             if eof_marker:
                 self.end_of_file_received[client_id] = self.end_of_file_received.get(client_id, 0) + 1
                 logging.info(f"Received EOF marker for client {client_id} - count: {self.end_of_file_received[client_id]}")
+                
+                # Once we've received all expected EOF markers, send to all output queues
                 if self.end_of_file_received[client_id] >= self.number_of_producer_workers:
-                    await self._send_eof_to_all_queues(client_id, data)
+                    await self._send_eof_to_all_queues(client_id, data, query)
                     self.end_of_file_received[client_id] = 0
                 await message.ack()
-                return
-                
-            # Get the target queue using round-robin
-            target_queue = self.balancer.next_queue()
-            if not target_queue:
-                logging.error("No target queues available")
-                await message.reject(requeue=True)
                 return
                 
             # Prepare message to publish - maintain the query field if present
@@ -139,21 +158,43 @@ class RouterWorker:
             }
             if query:
                 outgoing_message["query"] = query
+
             
-            
-            # Publish the message to the selected queue
-            success = await self.rabbit_client.publish(
-                exchange_name=self.exchange_name,
-                routing_key=target_queue,
-                message=Serializer.serialize(outgoing_message),
-                persistent=True
-            )
-            
-            if success:
-                await message.ack()
+            # Process message based on exchange type
+            if self.exchange_type == "fanout":
+                # For fanout exchanges, just publish once with empty routing key
+                success = await self.rabbit_client.publish(
+                    exchange_name=self.exchange_name,
+                    routing_key="",  # Routing key is ignored for fanout exchanges
+                    message=Serializer.serialize(outgoing_message),
+                    persistent=True
+                )
+                
+                if success:
+                    await message.ack()
+                else:
+                    logging.error(f"Failed to forward message to fanout exchange")
+                    await message.reject(requeue=True)
             else:
-                logging.error(f"Failed to forward message to queue: {target_queue}")
-                await message.reject(requeue=True)
+                # For direct exchanges, use the load balancer
+                queue_distribution = self.balancer.select_target_queues(data)
+                success = True
+                for queue, items in queue_distribution.items():
+                    # Publish the message to the selected queue
+                    outgoing_message["data"] = items
+                    publish_success = await self.rabbit_client.publish(
+                        exchange_name=self.exchange_name,
+                        routing_key=queue,
+                        message=Serializer.serialize(outgoing_message),
+                        persistent=True
+                    )
+                    if not publish_success:
+                        success = False
+                        logging.error(f"Failed to forward message to queue: {queue}")
+                if success:
+                    await message.ack()
+                else:
+                    await message.reject(requeue=True)
                 
         except Exception as e:
             logging.error(f"Error processing message: {e}")
@@ -204,14 +245,36 @@ class RouterWorker:
         if hasattr(self, 'rabbit_client'):
             asyncio.create_task(self.rabbit_client.close())
 
-    async def _send_eof_to_all_queues(self, client_id, data):
+    async def _send_eof_to_all_queues(self, client_id, data, query=None):
         """Send EOF marker to all output queues for a specific client ID"""
         eof_message = {
             "client_id": client_id,
             "data": data,
             "EOF_MARKER": True
         }
-        for queue in self.output_queues:
+        
+        # Include query field if present
+        if query:
+            eof_message["query"] = query
+        
+        # For fanout exchanges, we only need to publish once with any routing key
+        if self.exchange_type == "fanout":
+            # Just publish once to the exchange - it will distribute to all bound queues
+            success = await self.rabbit_client.publish(
+                exchange_name=self.exchange_name,
+                routing_key="",  # Routing key is ignored for fanout exchanges
+                message=Serializer.serialize(eof_message),
+                persistent=True
+            )
+            if not success:
+                logging.error(f"Failed to send EOF marker to fanout exchange for client {client_id}")
+            else:
+                logging.info(f"EOF marker sent to fanout exchange for client {client_id}, will be delivered to all bound queues")
+            return
+        
+        # For direct and other exchanges, send to each queue explicitly
+        all_queues = self._get_all_queue_names()
+        for queue in all_queues:
             success = await self.rabbit_client.publish(
                 exchange_name=self.exchange_name,
                 routing_key=queue,
@@ -221,4 +284,4 @@ class RouterWorker:
             if not success:
                 logging.error(f"Failed to send EOF marker to queue {queue} for client {client_id}")
         
-        # logging.info(f"\033[91mReceived EOF_MARKER for client {client_id}. Sent to all queues successfully\033[0m")
+        logging.info(f"EOF markers sent to all {len(all_queues)} output queues for client {client_id}")

@@ -12,24 +12,25 @@ logging.basicConfig(level=logging.INFO)
 
 # Constants
 QUERY_1 = os.getenv("QUERY_1", "1")
+QUERY_3 = os.getenv("QUERY_3", "3")
 QUERY_4 = os.getenv("QUERY_4", "4")
 QUERY_5 = os.getenv("QUERY_5", "5")
 
 class Client:
-    def __init__(self, name: str, age: int):
+    def __init__(self, name: str):
         self.skt = None
         self.name = name
-        self.age = age
         self.protocol = Protocol()
         self.config = Config()
         self.receiver_running = False
         self.receiver_thread = None
         self.output_file_q1 = f"output/output_records_client_{self.name}_Q1.json"
+        self.output_file_q3 = f"output/output_records_client_{self.name}_Q3.json"
         self.output_file_q4 = f"output/output_records_client_{self.name}_Q4.json"
         self.output_file_q5 = f"output/output_records_client_{self.name}_Q5.json"
         
     def __str__(self):
-        return f"Client(name={self.name}, age={self.age})"
+        return f"Client(name={self.name})"
     
     def connect(self, host: str, port: int):
         self.skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -63,9 +64,13 @@ class Client:
         if self.skt is None:
             raise Exception("Socket not connected")
         logging.info(f"\033[94mSending CSV file: {file_path}\033[0m")
+        batch_sent = 0
         
         for batch in self._read_file_in_batches(file_path, self.config.get_batch_size()):
             self.protocol.send_all(self.skt, batch)
+            batch_sent += 1
+            if batch_sent % 50 == 0 and "ratings" in file_path:
+                logging.info(f"Sent {batch_sent} batches so far...")
         self.protocol.send_all(self.skt, self.config.get_EOF())
         logging.info(f"\033[94mCSV file sent successfully with EOF: {self.config.get_EOF()}\033[0m")
         
@@ -93,13 +98,6 @@ class Client:
                     yield batch
         except IOError as e:
             raise IOError(f"Error reading file {file_path}: {e}")
-
-    def _recv_response(self):
-        if self.skt is None:
-            raise Exception("Socket not connected")
-        
-        data = self.protocol.recv_response(self.skt)
-        return data
     
     # New wrapper methods
     def start_sender_thread(self, file_paths=None):
@@ -146,15 +144,20 @@ class Client:
                         if query == QUERY_1:
                             parsed_data = self._format_data_query_1(parsed_data)
                             self._write_to_file(self.output_file_q1, parsed_data)
+                        elif query == QUERY_3:
+                            #parse data if needed
+                            # parsed_data = self._format_data_query_3(parsed_data) 
+                            self._write_to_file(self.output_file_q3, parsed_data)
+                            logging.info(f"\033[94mReceived data for Query {QUERY_3}\033[0m")
                         elif query == QUERY_4:
                             parsed_data = self._format_data_query_4(parsed_data)
                             self._write_to_file(self.output_file_q4, parsed_data)
-                            logging.info(f"\033[94mReceived data for Query 4\033[0m")
+                            logging.info(f"\033[94mReceived data for Query {QUERY_4}\033[0m")
                         elif query == QUERY_5:
                             #parse data if needed
                             # parsed_data = self._format_data_query_5(parsed_data) 
                             self._write_to_file(self.output_file_q5, parsed_data)
-                            logging.info(f"\033[94mReceived data for Query 5\033[0m")
+                            logging.info(f"\033[94mReceived data for Query {QUERY_5}\033[0m")
                             
                     except json.JSONDecodeError as e:
                         logging.error(f"Failed to parse response as JSON: {e}")

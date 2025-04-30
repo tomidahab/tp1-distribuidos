@@ -135,14 +135,19 @@ class Worker:
             eof_marker = deserialized_message.get("EOF_MARKER")
             if eof_marker:
                 logging.info(f"EOF marker received for client_id '{client_id}'")
-                await self.send_data(client_id, self.participations, False, query)
-                await self.send_data(client_id, [], True, query)
-                await message.ack()
-                return
-
-            if data:
-                for actor, count in data.items():
-                    self.participations[actor] = self.participations.get(actor, 0) + count
+                await self.send_data(client_id, data, True, query)
+            elif data:
+                # TODO: This is not necessarily anymore, it could be just an "anonymous" dict
+                self.participations[client_id] = {}
+                for actor in data:
+                    actor_name = actor.get("name")
+                    if not actor_name in self.participations[client_id]:
+                        self.participations[client_id][actor_name] = 0
+                    self.participations[client_id][actor_name] += 1
+                parsed_data = self._parse_data(self.participations[client_id])
+                await self.send_data(client_id, parsed_data, False, query)
+            else:
+                logging.warning(f"No data in message: {deserialized_message}")
 
             await message.ack()
             
@@ -151,6 +156,14 @@ class Worker:
             await message.reject(requeue=True)
             return
     
+    def _parse_data(self, data):
+        """
+        Parse the data to extract the average movies by rating
+        """
+        parsed_data = []
+        for actor, count in data.items():
+            parsed_data.append({"name": actor, "count": count})
+        return parsed_data
 
     async def send_data(self, client_id, data, eof_marker=False, query=None):
         """Send data to the router queue with query in metadata"""

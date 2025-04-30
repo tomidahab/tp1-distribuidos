@@ -6,7 +6,6 @@ from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
 from dotenv import load_dotenv
 import heapq
-from collections import defaultdict
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,17 +18,18 @@ load_dotenv()
 
 # Constants
 ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE")
-ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE",)
+RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE",)
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "top_actors_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
 TOP_N = int(os.getenv("TOP_N", 10))
+QUERY_4 = os.getenv("QUERY_4", "4")
 
 class Worker:
     def __init__(self, 
                  consumer_queue_name=ROUTER_CONSUME_QUEUE, 
                  exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
                  exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
-                 producer_queue_name=[ROUTER_PRODUCER_QUEUE]):
+                 producer_queue_name=[RESPONSE_QUEUE]):
 
         self._running = True
         self.consumer_queue_name = consumer_queue_name
@@ -138,16 +138,15 @@ class Worker:
                 # If we have data for this client, send it to router producer queue
                 if client_id in self.client_data:
                     top_actors = self._get_top_actors(client_id)
-                    await self._send_data(client_id, top_actors, self.producer_queue_name[0])
-                    await self._send_data(client_id, [], self.producer_queue_name[0], True)
+                    await self._send_data(client_id, top_actors, self.producer_queue_name[0], True, QUERY_4)
                     # Clean up client data after sending
                     del self.client_data[client_id]
-                    logging.info(f"Sent top actors for client {client_id} and cleaned up")
+                    logging.info(f"Sent top 10 actors for client {client_id} and cleaned up COLLECTOR")
                 else:
                     logging.warning(f"Received EOF for client {client_id} but no data found")
             elif data:
                 # Update actors counts for this client
-                self._update_actors_data(client_id, data)
+                self._update_top_actors(client_id, data)
             else:
                 logging.warning(f"Received message with no data for client {client_id}")
             
@@ -158,39 +157,55 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
     
-    
-    def _update_actors_data(self, client_id, data):
+    def _update_top_actors(self, client_id, actor_data_batch):
         """
-        Update the actors count data for a specific client
-        Store counts for ALL actors, not just top_n
+        Update the top N actors for a client with a new batch of actor data
+        Each batch contains unique actors that haven't been seen before
+        Using a max-heap to track top appearances
         """
+        # Initialize max heap for this client if it doesn't exist
         if client_id not in self.client_data:
-            self.client_data[client_id] = defaultdict(int)
-        for actor_data in data:
-            name = actor_data.get("name")
-            count = actor_data.get("count", 0)
-            if name:
-                self.client_data[client_id][name] += count
-            else:
-                logging.warning(f"Received actor data without name for client {client_id}, skipping")
-    
+            self.client_data[client_id] = []
+
+        # Get current heap
+        actors_list = self.client_data[client_id]
         
+        # Process each actor in the batch
+        for actor_info in actor_data_batch:
+            name = actor_info.get("name")
+            count = actor_info.get("count", 0)
+            
+            if not name:
+                continue
+                
+            # For a max heap, we negate the count (since heapq is a min heap by default)
+            # Tuple format: (-count, name) - negative count makes it a max heap
+            entry = (-count, name)
+            
+            # If heap is not full yet, add the new actor
+            if len(actors_list) < self.top_n:
+                heapq.heappush(actors_list, entry)
+            # Otherwise, check if this actor should replace one in our top N
+            elif -entry[0] > -actors_list[0][0]:  # If new count > smallest count in heap
+                heapq.heapreplace(actors_list, entry)
+    
     def _get_top_actors(self, client_id):
         """
-        Calculate and return the top N actors for a client
-        Only called when EOF is received
+        Get the top N actors for a client in descending order of count
         """
         if client_id not in self.client_data:
             return []
         
-        # Get all actor counts for this client
-        actor_counts = self.client_data[client_id]
+        # Get heap for this client
+        heap = self.client_data[client_id]
         
-        # Use heapq to get the top N actors
-        top_actors = heapq.nlargest(self.top_n, actor_counts.items(), key=lambda x: x[1])
+        # Sort actors based on heap entries (already in correct order because of max-heap)
+        # No need for additional sorting since our max-heap already has them in right order
         
-        # Format the result as a list of dictionaries
-        return [{"name": actor, "count": count} for actor, count in top_actors]
+        # Convert from max-heap format (-count, name) to the expected output format
+        # We negate the count again to get the original positive value
+        return [{"name": name, "count": -count} for count, name in sorted(heap)]
+    
     
     async def _send_data(self, client_id, data, queue_name=None, eof_marker=False, query=None):
         """Send data to the specified router producer queue"""

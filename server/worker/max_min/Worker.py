@@ -19,10 +19,9 @@ load_dotenv()
 
 # Constants
 ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE")
-ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE",)
-EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "top_actors_exchange")
+ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
+EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "max_min_movies_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
-TOP_N = int(os.getenv("TOP_N", 10))
 
 class Worker:
     def __init__(self, 
@@ -38,14 +37,13 @@ class Worker:
         self.exchange_type_producer = exchange_type_producer
         self.rabbitmq = RabbitMQClient()
         
-        self.client_data = {}
-        self.top_n = TOP_N
-        
+        self.client_data = defaultdict(dict)
+
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
         signal.signal(signal.SIGTERM, self._handle_shutdown)
         
-        logging.info(f"Top Worker initialized for consumer queue '{consumer_queue_name}', producer queues '{producer_queue_name}'")
+        logging.info(f"max_min Worker initialized for consumer queue '{consumer_queue_name}', producer queues '{producer_queue_name}'")
         logging.info(f"Exchange producer: '{exchange_name_producer}', type: '{exchange_type_producer}'")
     
     async def run(self):
@@ -124,7 +122,7 @@ class Worker:
         return True
     
     async def _process_message(self, message):
-        """Process a message and update top actors for the client"""
+        """Process a message and update movies data for the client"""
         try:
             # Deserialize the message
             deserialized_message = Serializer.deserialize(message.body)
@@ -137,17 +135,16 @@ class Worker:
             if eof_marker:
                 # If we have data for this client, send it to router producer queue
                 if client_id in self.client_data:
-                    top_actors = self._get_top_actors(client_id)
-                    await self._send_data(client_id, top_actors, self.producer_queue_name[0])
-                    await self._send_data(client_id, [], self.producer_queue_name[0], True)
+                    max_min = self._get_max_min(client_id)
+                    await self._send_data(client_id, max_min, self.producer_queue_name[0])
+                    await self._send_data(client_id, {}, self.producer_queue_name[0], True)
                     # Clean up client data after sending
                     del self.client_data[client_id]
-                    logging.info(f"Sent top actors for client {client_id} and cleaned up")
+                    logging.info(f"\033[92mSent max/min ratings for client {client_id} and cleaned up\033[0m")
                 else:
                     logging.warning(f"Received EOF for client {client_id} but no data found")
             elif data:
-                # Update actors counts for this client
-                self._update_actors_data(client_id, data)
+                self._update_movie_data(client_id, data)
             else:
                 logging.warning(f"Received message with no data for client {client_id}")
             
@@ -157,40 +154,93 @@ class Worker:
             logging.error(f"Error processing message: {e}")
             # Reject the message and requeue it
             await message.reject(requeue=True)
+
     
-    
-    def _update_actors_data(self, client_id, data):
+    def _update_movie_data(self, client_id, data):
         """
-        Update the actors count data for a specific client
-        Store counts for ALL actors, not just top_n
+        Update the movie data for a client
+        
+        Args:
+            client_id (str): Client identifier
+            data (dict or list): Movie ratings data from upstream
         """
-        if client_id not in self.client_data:
-            self.client_data[client_id] = defaultdict(int)
-        for actor_data in data:
-            name = actor_data.get("name")
-            count = actor_data.get("count", 0)
-            if name:
-                self.client_data[client_id][name] += count
-            else:
-                logging.warning(f"Received actor data without name for client {client_id}, skipping")
-    
+        if not data:
+            logging.info(f"Received empty data batch for client {client_id}")
+            return
         
-    def _get_top_actors(self, client_id):
+        for movie in data:
+            movie_id = movie.get('id')
+            if movie_id is None:
+                logging.warning(f"\033[93mSkipping movie with missing id: {movie}\033[0m")
+                continue
+            if movie.get('count', 0) <= 0 or movie.get('sum', 0) <= 0:
+                logging.warning(f"\033[93mSkipping movie with zero count or zero sum or empty values: {movie}\033[0m")
+                continue
+
+            # Initialize client data if not present
+            if client_id not in self.client_data:
+                self.client_data[client_id] = {}
+
+            # Initialize movie data if not present
+            if movie_id not in self.client_data[client_id]:
+                self.client_data[client_id][movie_id] = {
+                    'sum': 0,
+                    'count': 0,
+                    'name': movie.get('name', '')
+                }
+            # Update the sum and count
+            self.client_data[client_id][movie_id]['sum'] += movie.get('sum')
+            self.client_data[client_id][movie_id]['count'] += movie.get('count')
+            self.client_data[client_id][movie_id]['avg'] = self.client_data[client_id][movie_id]['sum'] / self.client_data[client_id][movie_id]['count']
+
+    def _get_max_min(self, client_id):
         """
-        Calculate and return the top N actors for a client
-        Only called when EOF is received
+        Calculate and get the movies with max and min ratings for a client
+        
+        Args:
+            client_id (str): Client identifier
+            
+        Returns:
+            dict: Dictionary with max and min movie entries
         """
-        if client_id not in self.client_data:
-            return []
+        if client_id not in self.client_data or not self.client_data[client_id]:
+            logging.warning(f"No data found for client {client_id}")
+            return {'max': None, 'min': None}
         
-        # Get all actor counts for this client
-        actor_counts = self.client_data[client_id]
+        max_movie = None
+        min_movie = None
+        max_avg = -float('inf')
+        min_avg = float('inf')
         
-        # Use heapq to get the top N actors
-        top_actors = heapq.nlargest(self.top_n, actor_counts.items(), key=lambda x: x[1])
+        # Find max and min from all stored movies
+        for movie_id, movie_data in self.client_data[client_id].items():
+            avg_rating = movie_data.get('avg', 0)
+            
+            # Update max if this rating is higher
+            if avg_rating > max_avg:
+                max_avg = avg_rating
+                max_movie = {
+                    'id': movie_id,
+                    'avg': avg_rating,
+                    'name': movie_data.get('name', '')
+                }
+                
+            # Update min if this rating is lower
+            if avg_rating < min_avg:
+                min_avg = avg_rating
+                min_movie = {
+                    'id': movie_id,
+                    'avg': avg_rating,
+                    'name': movie_data.get('name', '')
+                }
         
-        # Format the result as a list of dictionaries
-        return [{"name": actor, "count": count} for actor, count in top_actors]
+        result = {
+            'max': max_movie,
+            'min': min_movie
+        }
+        
+        return result
+
     
     async def _send_data(self, client_id, data, queue_name=None, eof_marker=False, query=None):
         """Send data to the specified router producer queue"""

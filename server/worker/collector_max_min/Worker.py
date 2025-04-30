@@ -5,8 +5,6 @@ import os
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
 from dotenv import load_dotenv
-import heapq
-from collections import defaultdict
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,17 +17,17 @@ load_dotenv()
 
 # Constants
 ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE")
-ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE",)
+RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE",)
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "top_actors_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
-TOP_N = int(os.getenv("TOP_N", 10))
+QUERY_3 = os.getenv("QUERY_3", "3")
 
 class Worker:
     def __init__(self, 
                  consumer_queue_name=ROUTER_CONSUME_QUEUE, 
                  exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
                  exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
-                 producer_queue_name=[ROUTER_PRODUCER_QUEUE]):
+                 producer_queue_name=[RESPONSE_QUEUE]):
 
         self._running = True
         self.consumer_queue_name = consumer_queue_name
@@ -39,7 +37,6 @@ class Worker:
         self.rabbitmq = RabbitMQClient()
         
         self.client_data = {}
-        self.top_n = TOP_N
         
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -137,17 +134,16 @@ class Worker:
             if eof_marker:
                 # If we have data for this client, send it to router producer queue
                 if client_id in self.client_data:
-                    top_actors = self._get_top_actors(client_id)
-                    await self._send_data(client_id, top_actors, self.producer_queue_name[0])
-                    await self._send_data(client_id, [], self.producer_queue_name[0], True)
+                    top_actors = self._get_max_min(client_id)
+                    await self._send_data(client_id, top_actors, self.producer_queue_name[0], True, QUERY_3)
                     # Clean up client data after sending
                     del self.client_data[client_id]
-                    logging.info(f"Sent top actors for client {client_id} and cleaned up")
+                    logging.info(f"Sent top 10 actors for client {client_id} and cleaned up")
                 else:
                     logging.warning(f"Received EOF for client {client_id} but no data found")
             elif data:
                 # Update actors counts for this client
-                self._update_actors_data(client_id, data)
+                self._update_max_min(client_id, data)
             else:
                 logging.warning(f"Received message with no data for client {client_id}")
             
@@ -158,39 +154,58 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
     
-    
-    def _update_actors_data(self, client_id, data):
+    def _update_max_min(self, client_id, data):
         """
-        Update the actors count data for a specific client
-        Store counts for ALL actors, not just top_n
+        Update the max and min movie values for a client
+        
+        Args:
+            client_id: The client identifier
+            data: A dictionary containing 'max' and 'min' movie information
+        """
+        # Get max and min movies from data
+        new_max = data.get('max')
+        new_min = data.get('min')
+        
+        if not new_max or not new_min:
+            logging.warning(f"Received incomplete max/min data for client {client_id}")
+            return
+        
+        # Initialize client data if it doesn't exist
+        if client_id not in self.client_data:
+            self.client_data[client_id] = {
+                'max': new_max,
+                'min': new_min
+            }
+            return
+        
+        # Get current max and min
+        current_max = self.client_data[client_id]['max']
+        current_min = self.client_data[client_id]['min']
+        
+        # Update max if the new max has a higher avg
+        if new_max.get('avg') > current_max.get('avg'):
+            self.client_data[client_id]['max'] = new_max
+            
+        # Update min if the new min has a lower avg
+        if new_min.get('avg') < current_min.get('avg'):
+            self.client_data[client_id]['min'] = new_min
+    
+    def _get_max_min(self, client_id):
+        """
+        Get the max and min movie avgs for a client
+        
+        Args:
+            client_id: The client identifier
+        
+        Returns:
+            A dictionary containing the max and min movie information
         """
         if client_id not in self.client_data:
-            self.client_data[client_id] = defaultdict(int)
-        for actor_data in data:
-            name = actor_data.get("name")
-            count = actor_data.get("count", 0)
-            if name:
-                self.client_data[client_id][name] += count
-            else:
-                logging.warning(f"Received actor data without name for client {client_id}, skipping")
+            return {'max': None, 'min': None}
+        
+        return self.client_data[client_id]
     
-        
-    def _get_top_actors(self, client_id):
-        """
-        Calculate and return the top N actors for a client
-        Only called when EOF is received
-        """
-        if client_id not in self.client_data:
-            return []
-        
-        # Get all actor counts for this client
-        actor_counts = self.client_data[client_id]
-        
-        # Use heapq to get the top N actors
-        top_actors = heapq.nlargest(self.top_n, actor_counts.items(), key=lambda x: x[1])
-        
-        # Format the result as a list of dictionaries
-        return [{"name": actor, "count": count} for actor, count in top_actors]
+    
     
     async def _send_data(self, client_id, data, queue_name=None, eof_marker=False, query=None):
         """Send data to the specified router producer queue"""

@@ -17,22 +17,23 @@ load_dotenv()
 
 # Constants
 MOVIES_ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE_MOVIES")
-CREDITS_ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE_CREDITS")
+RATINGS_ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE_RATINGS")
 EOF_MARKER = os.getenv("EOF_MARKER", "EOF_MARKER")
 
 # Router configuration
 ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_data_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
+
 NUMBER_OF_CLIENTS = int(os.getenv("NUMBER_OF_CLIENTS"))
 
 class Worker:
     def __init__(self, 
-                 consumer_queue_names=[MOVIES_ROUTER_CONSUME_QUEUE, CREDITS_ROUTER_CONSUME_QUEUE], 
+                 consumer_queue_names=[MOVIES_ROUTER_CONSUME_QUEUE, RATINGS_ROUTER_CONSUME_QUEUE], 
                  exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
                  exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
                  producer_queue_name=ROUTER_PRODUCER_QUEUE,
-                number_of_clients=NUMBER_OF_CLIENTS):
+                 number_of_clients=NUMBER_OF_CLIENTS):
 
         self._running = True
         self.consumer_queue_names = consumer_queue_names
@@ -48,7 +49,7 @@ class Worker:
         
         # Data store for processing
         self.collected_data = {}
-        
+
         self.number_of_clients_processed = 0
         self.number_of_clients = number_of_clients
 
@@ -192,7 +193,7 @@ class Worker:
                     logging.info(f"\033[92mJoined data for client {client_id} with EOF marker\033[0m")
                     await self.send_data(client_id, data, True)
                     del self.collected_data[client_id]
-
+                
                 await message.ack()
                 # Check if all clients have been processed
                 self.number_of_clients_processed += 1
@@ -228,7 +229,6 @@ class Worker:
                         self.collected_data[client_id],
                         data
                     )
-                    
                     if joined_data:
                         # Send joined data
                         await self.send_data(client_id, joined_data)
@@ -241,25 +241,44 @@ class Worker:
             # Reject the message and requeue it
             await message.reject(requeue=True)
     
-    def _join_data(self, movies_data, credits_data):
+    # TODO: Abstract this as a class to a common module
+    def _join_data(self, movies_data, ratings_data):
         """
-        Join the movies and credits data
-        This is a simplified implementation - replace with your actual join logic
+        Join the movies and ratings data and calculate average ratings per movie
+        
+        Args:
+            movies_data (list): List of movie objects
+            ratings_data (list): List of rating objects with id and rating fields
+            
+        Returns:
+            list: List of dicts with id, avg rating, and appearances count
         """
         try:
-            if not movies_data or not credits_data:
+            if not movies_data or not ratings_data:
                 return []
-                
-            # Create a dict to efficiently look up credits by movie ID
-            actors = []
-            for credits in credits_data:
-                movie_id = credits.get("movie_id")
-                if movie_id in movies_data:
-                    for actor in credits.get("cast"):
-                        actors.append({
-                            "name": actor
-                        })
-            return actors
+
+            # Create a set of movie ids from movies_data for efficient lookup
+            movie_ids = set(movies_data.keys())
+            
+            # Dictionary to track sum and count of ratings for each movie
+            movies_with_ratings = []
+            
+            # Process each rating, adding it to our stats if the movie is in our dataset
+            for rating in ratings_data:
+                movie_id = rating.get('id')
+                if movie_id and movie_id in movie_ids:
+                    try:
+                        rating_value = float(rating.get('rating', 0))
+                        if rating_value > 0:
+                            movies_with_ratings.append({
+                                'id': movie_id,
+                                'name': movies_data[movie_id],
+                                'rating': rating_value
+                            })
+                    except (ValueError, TypeError):
+                        logging.warning(f"Skipping invalid rating value for movie {movie_id}")
+            
+            return movies_with_ratings
             
         except Exception as e:
             logging.error(f"Error joining data: {e}")

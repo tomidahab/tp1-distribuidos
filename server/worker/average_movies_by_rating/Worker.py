@@ -5,8 +5,7 @@ import os
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
 from dotenv import load_dotenv
-import heapq
-from collections import defaultdict
+import ast
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,35 +16,35 @@ logging.basicConfig(
 # Load environment variables
 load_dotenv()
 
-# Constants
-ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE")
-ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE",)
-EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "top_actors_exchange")
+
+# Output queues and exchange
+ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
+EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_by_country_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
-TOP_N = int(os.getenv("TOP_N", 10))
+
+ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE")
 
 class Worker:
     def __init__(self, 
                  consumer_queue_name=ROUTER_CONSUME_QUEUE, 
                  exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
                  exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
-                 producer_queue_name=[ROUTER_PRODUCER_QUEUE]):
+                 producer_queue_names=[ROUTER_PRODUCER_QUEUE]):
 
         self._running = True
         self.consumer_queue_name = consumer_queue_name
-        self.producer_queue_name = producer_queue_name
+        self.producer_queue_names = producer_queue_names
         self.exchange_name_producer = exchange_name_producer
         self.exchange_type_producer = exchange_type_producer
         self.rabbitmq = RabbitMQClient()
-        
-        self.client_data = {}
-        self.top_n = TOP_N
+
+        self.averages = {}
         
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
         signal.signal(signal.SIGTERM, self._handle_shutdown)
         
-        logging.info(f"Top Worker initialized for consumer queue '{consumer_queue_name}', producer queues '{producer_queue_name}'")
+        logging.info(f"Worker initialized for consumer queue '{consumer_queue_name}', producer queues '{producer_queue_names}'")
         logging.info(f"Exchange producer: '{exchange_name_producer}', type: '{exchange_type_producer}'")
     
     async def run(self):
@@ -74,7 +73,7 @@ class Worker:
             return await self._setup_rabbitmq(retry_count + 1)
         
         # -------------------- CONSUMER --------------------
-        # Declare input queue
+        # Declare input queue (from router)
         queue = await self.rabbitmq.declare_queue(self.consumer_queue_name, durable=True)
         if not queue:
             logging.error(f"Failed to declare consumer queue '{self.consumer_queue_name}'")
@@ -93,7 +92,7 @@ class Worker:
             return False
         
         # Declare output queues
-        for queue_name in self.producer_queue_name:
+        for queue_name in self.producer_queue_names:
             queue = await self.rabbitmq.declare_queue(queue_name, durable=True)
             if not queue:
                 logging.error(f"Failed to declare producer queue '{queue_name}'")
@@ -124,100 +123,109 @@ class Worker:
         return True
     
     async def _process_message(self, message):
-        """Process a message and update top actors for the client"""
+        """Process a message"""
         try:
-            # Deserialize the message
             deserialized_message = Serializer.deserialize(message.body)
-            
-            # Extract client_id, data and EOF marker
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
-            eof_marker = deserialized_message.get("EOF_MARKER", False)
-            
+            eof_marker = deserialized_message.get("EOF_MARKER")
             if eof_marker:
-                # If we have data for this client, send it to router producer queue
-                if client_id in self.client_data:
-                    top_actors = self._get_top_actors(client_id)
-                    await self._send_data(client_id, top_actors, self.producer_queue_name[0])
-                    await self._send_data(client_id, [], self.producer_queue_name[0], True)
-                    # Clean up client data after sending
-                    del self.client_data[client_id]
-                    logging.info(f"Sent top actors for client {client_id} and cleaned up")
-                else:
-                    logging.warning(f"Received EOF for client {client_id} but no data found")
+                logging.info(f"EOF marker received for client_id '{client_id}'")
+                await self.send_data(client_id, data, True)
             elif data:
-                # Update actors counts for this client
-                self._update_actors_data(client_id, data)
+                self._update_averages(client_id, data)
+                # Transform dict of movies into a list of dicts with ID included
+                transformed_data = [
+                    {
+                        "id": movie_id,
+                        "name": movie_data["name"],
+                        "sum": movie_data["sum"],
+                        "count": movie_data["count"]
+                    }
+                    for movie_id, movie_data in self.averages[client_id].items()
+                ]
+                # Send the updated averages to the producer queue
+                await self.send_data(client_id, transformed_data)
             else:
-                logging.warning(f"Received message with no data for client {client_id}")
-            
+                logging.warning(f"\033[93mReceived message without data for client_id '{client_id}'\033[0m")
+
             await message.ack()
             
         except Exception as e:
-            logging.error(f"Error processing message: {e}")
-            # Reject the message and requeue it
+            logging.error(f"Failed to deserialize message: {e}")
             await message.reject(requeue=True)
+            return
     
-    
-    def _update_actors_data(self, client_id, data):
+    def _update_averages(self, client_id, data):
         """
-        Update the actors count data for a specific client
-        Store counts for ALL actors, not just top_n
+        Update the average ratings for movies based on new data
+        
+        Args:
+            client_id (str): The client ID for logging purposes
+            data (list): List of dicts with id, avg, sum and count fields
         """
-        if client_id not in self.client_data:
-            self.client_data[client_id] = defaultdict(int)
-        for actor_data in data:
-            name = actor_data.get("name")
-            count = actor_data.get("count", 0)
-            if name:
-                self.client_data[client_id][name] += count
-            else:
-                logging.warning(f"Received actor data without name for client {client_id}, skipping")
-    
+        if not data:
+            logging.warning(f"Received empty data batch")
+            return
+                
+        # TODO: This is not necessarily anymore, it could be just an "anonymous" dict
+        # Initialize or reinitialize the client entry always 
+        self.averages[client_id] = {}
         
-    def _get_top_actors(self, client_id):
-        """
-        Calculate and return the top N actors for a client
-        Only called when EOF is received
-        """
-        if client_id not in self.client_data:
-            return []
+        client_movies = self.averages[client_id]
         
-        # Get all actor counts for this client
-        actor_counts = self.client_data[client_id]
-        
-        # Use heapq to get the top N actors
-        top_actors = heapq.nlargest(self.top_n, actor_counts.items(), key=lambda x: x[1])
-        
-        # Format the result as a list of dictionaries
-        return [{"name": actor, "count": count} for actor, count in top_actors]
-    
-    async def _send_data(self, client_id, data, queue_name=None, eof_marker=False, query=None):
-        """Send data to the specified router producer queue"""
-        if queue_name is None:
-            queue_name = self.producer_queue_name[0]
-            
+        # Process each movie in the new batch
+        for movie in data:
+            movie_id = movie.get('id')
+            movie_name = movie.get('name')
+            if not movie_id:
+                logging.warning("Found movie entry without ID, skipping")
+                continue
+                
+            # Initialize movie entry if it doesn't exist
+            if movie_id not in client_movies:
+                client_movies[movie_id] = {
+                    'name': movie_name,
+                    'sum': 0,
+                    'count': 0
+                }
+                
+            # Extract data from the movie entry
+            new_sum = client_movies[movie_id]['sum'] + movie.get('rating', 0)
+            new_count = client_movies[movie_id]['count'] + 1
+
+            self.averages[client_id][movie_id] = {
+                'name': movie_name,
+                'sum': new_sum,
+                'count': new_count
+            }
+
+
+    async def send_data(self, client_id, data, eof_marker=False, query=None):
+        """Send data to the router queue with query in metadata"""
         message = self._add_metadata(client_id, data, eof_marker, query)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
-            routing_key=queue_name,
+            routing_key=self.producer_queue_names[0],
             message=Serializer.serialize(message),
             persistent=True
         )
-        
         if not success:
-            logging.error(f"Failed to send data to {queue_name} for client {client_id}")
+            logging.error(f"Failed to send data with query '{query}' to router queue")
 
+
+    #TODO: move _add_metadata to Serializer
     def _add_metadata(self, client_id, data, eof_marker=False, query=None):
-        """Prepare the message to be sent to the output queue"""
+        """Add metadata to the message"""
         message = {        
             "client_id": client_id,
-            "data": data,
             "EOF_MARKER": eof_marker,
-            "query": query,
+            "data": data,
+            "query": query
         }
         return message
-        
+
+
     def _handle_shutdown(self, *_):
         """Handle shutdown signals"""
         logging.info(f"Shutting down worker...")
