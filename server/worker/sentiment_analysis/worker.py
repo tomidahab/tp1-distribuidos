@@ -103,7 +103,6 @@ class SentimentWorker:
                 # Pass through EOF marker to response queue
                 response_message = {
                     "client_id": client_id,
-                    "query": "Q5",
                     "data": [],
                     "EOF_MARKER": True
                 }
@@ -122,12 +121,11 @@ class SentimentWorker:
                 logging.info(f"Processing {len(data)} movies for sentiment analysis")
                 processed_data = await self._analyze_sentiment_and_calculate_ratios(data)
                 
-                # Prepare response message
-                response_message = {
-                    "client_id": client_id,
-                    "query": "Q5",
-                    "data": processed_data
-                }
+                # Prepare response message using the standardized _add_metadata method
+                response_message = self._add_metadata(
+                    client_id=client_id,
+                    data=processed_data
+                )
                 
                 # Send processed data to response queue
                 success = await self.rabbitmq.publish_to_queue(
@@ -232,6 +230,16 @@ class SentimentWorker:
         except Exception as e:
             logging.error(f"Error during sentiment analysis: {e}")
             return ("NEUTRAL", 0.5)
+        
+    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+        """Prepare the message to be sent to the output queue - standardized across workers"""
+        message = {        
+            "client_id": client_id,
+            "data": data,
+            "EOF_MARKER": eof_marker,
+            "query": query,
+        }
+        return message
     
     def _handle_shutdown(self, *_):
         logging.info(f"Shutting down sentiment analysis worker...")

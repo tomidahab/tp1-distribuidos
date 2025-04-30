@@ -27,11 +27,8 @@ class Worker:
         self.response_queue_name = response_queue_name
         self.rabbitmq = RabbitMQClient()
         
-        # Initialize sentiment tracking attributes
-        self.sentiment_totals = {
-            "POSITIVE": {"sum": 0, "count": 0},
-            "NEGATIVE": {"sum": 0, "count": 0}
-        }
+        # Initialize client data dictionary to track sentiment data per client
+        self.client_data = {}
         
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -99,44 +96,47 @@ class Worker:
             if eof_marker:
                 logging.info(f"Received EOF marker for client_id '{client_id}'")
                 
-                # Calculate final averages
-                positive_avg = 0
-                if self.sentiment_totals["POSITIVE"]["count"] > 0:
-                    positive_avg = self.sentiment_totals["POSITIVE"]["sum"] / self.sentiment_totals["POSITIVE"]["count"]
+                if client_id in self.client_data:
+                    # Calculate final averages
+                    client_sentiment_totals = self.client_data[client_id]
                     
-                negative_avg = 0
-                if self.sentiment_totals["NEGATIVE"]["count"] > 0:
-                    negative_avg = self.sentiment_totals["NEGATIVE"]["sum"] / self.sentiment_totals["NEGATIVE"]["count"]
-                
-                # Prepare detailed results
-                positive_count = self.sentiment_totals["POSITIVE"]["count"]
-                negative_count = self.sentiment_totals["NEGATIVE"]["count"]
-                
-                # Create the final response with the average results
-                result = [{
-                    "sentiment": "POSITIVE",
-                    "average_ratio": positive_avg,
-                    "movie_count": positive_count
-                }, {
-                    "sentiment": "NEGATIVE", 
-                    "average_ratio": negative_avg,
-                    "movie_count": negative_count
-                }]
-                
-                # Use the _add_metadata function to prepare the response
-                response_message = self._add_metadata(client_id, result, True, QUERY_5)
-                
-                await self.rabbitmq.publish_to_queue(
-                    queue_name=self.response_queue_name,
-                    message=Serializer.serialize(response_message),
-                    persistent=True
-                )
-                
-                # Reset the accumulators for the next client
-                self.sentiment_totals = {
-                    "POSITIVE": {"sum": 0, "count": 0},
-                    "NEGATIVE": {"sum": 0, "count": 0}
-                }
+                    positive_avg = 0
+                    if client_sentiment_totals["POSITIVE"]["count"] > 0:
+                        positive_avg = client_sentiment_totals["POSITIVE"]["sum"] / client_sentiment_totals["POSITIVE"]["count"]
+                        
+                    negative_avg = 0
+                    if client_sentiment_totals["NEGATIVE"]["count"] > 0:
+                        negative_avg = client_sentiment_totals["NEGATIVE"]["sum"] / client_sentiment_totals["NEGATIVE"]["count"]
+                    
+                    # Prepare detailed results
+                    positive_count = client_sentiment_totals["POSITIVE"]["count"]
+                    negative_count = client_sentiment_totals["NEGATIVE"]["count"]
+                    
+                    # Create the final response with the average results
+                    result = [{
+                        "sentiment": "POSITIVE",
+                        "average_ratio": positive_avg,
+                        "movie_count": positive_count
+                    }, {
+                        "sentiment": "NEGATIVE", 
+                        "average_ratio": negative_avg,
+                        "movie_count": negative_count
+                    }]
+                    
+                    # Use the _add_metadata function to prepare the response
+                    response_message = self._add_metadata(client_id, result, True, QUERY_5)
+                    
+                    await self.rabbitmq.publish_to_queue(
+                        queue_name=self.response_queue_name,
+                        message=Serializer.serialize(response_message),
+                        persistent=True
+                    )
+                    
+                    # Clean up client data after sending
+                    del self.client_data[client_id]
+                    logging.info(f"Sent average sentiment results for client {client_id} and cleaned up client data")
+                else:
+                    logging.warning(f"Received EOF for client {client_id} but no data found")
                 
                 await message.ack()
                 return
@@ -153,14 +153,23 @@ class Worker:
                     
                     logging.debug(f"Processing movie: {movie.get('Movie', 'Unknown')}, sentiment: {sentiment}, ratio: {ratio}")
                     
-                    if sentiment in self.sentiment_totals:
-                        # Add to the running total
-                        self.sentiment_totals[sentiment]["sum"] += ratio
-                        self.sentiment_totals[sentiment]["count"] += 1
+                    if sentiment:
+                        if client_id not in self.client_data:
+                            self.client_data[client_id] = {
+                                "POSITIVE": {"sum": 0, "count": 0},
+                                "NEGATIVE": {"sum": 0, "count": 0}
+                            }
+                        
+                        if sentiment in self.client_data[client_id]:
+                            # Add to the running total
+                            self.client_data[client_id][sentiment]["sum"] += ratio
+                            self.client_data[client_id][sentiment]["count"] += 1
                 
                 # Log current state
-                positive_count = self.sentiment_totals["POSITIVE"]["count"]
-                negative_count = self.sentiment_totals["NEGATIVE"]["count"]
+                if client_id in self.client_data:
+                    positive_count = self.client_data[client_id]["POSITIVE"]["count"]
+                    negative_count = self.client_data[client_id]["NEGATIVE"]["count"]
+                    logging.debug(f"Client {client_id} stats - POSITIVE: {positive_count}, NEGATIVE: {negative_count}")
                 
                 # Acknowledge message
                 await message.ack()
