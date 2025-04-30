@@ -206,7 +206,7 @@ class RabbitMQClient:
             return True
         except Exception as e:
             logging.error(f"Failed to cancel consumer for queue '{queue_name}': {e}")
-            return False
+            raise e
         
     async def publish_to_queue(self, queue_name: str, message: str, persistent=True) -> bool:
         """Publish message directly to queue using the default exchange"""

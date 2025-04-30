@@ -25,12 +25,15 @@ ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_data_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
 
+NUMBER_OF_CLIENTS = int(os.getenv("NUMBER_OF_CLIENTS"))
+
 class Worker:
     def __init__(self, 
                  consumer_queue_names=[MOVIES_ROUTER_CONSUME_QUEUE, RATINGS_ROUTER_CONSUME_QUEUE], 
                  exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
                  exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
-                 producer_queue_name=ROUTER_PRODUCER_QUEUE):
+                 producer_queue_name=ROUTER_PRODUCER_QUEUE,
+                 number_of_clients=NUMBER_OF_CLIENTS):
 
         self._running = True
         self.consumer_queue_names = consumer_queue_names
@@ -46,6 +49,9 @@ class Worker:
         
         # Data store for processing
         self.collected_data = {}
+
+        self.number_of_clients_processed = 0
+        self.number_of_clients = number_of_clients
 
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -187,9 +193,20 @@ class Worker:
                     logging.info(f"\033[92mJoined data for client {client_id} with EOF marker\033[0m")
                     await self.send_data(client_id, data, True)
                     del self.collected_data[client_id]
-
+                
                 await message.ack()
-                await self._switch_to_next_queue()  # Switch to next queue
+                # Check if all clients have been processed
+                self.number_of_clients_processed += 1
+                if self.number_of_clients_processed >= self.number_of_clients:
+                    logging.info(f"\033[92mAll clients processed, switching to next queue\033[0m")
+                    try:
+                        # TODO: Handle this properly
+                        await self._switch_to_next_queue()  # Switch to next queue
+                    except Exception as e:
+                        logging.info(f"\033[91mError switching to next queue: {e}\033[0m")
+                        await self._switch_to_next_queue()  # Switch to next queue
+                        
+                    self.number_of_clients_processed = 0
                 return
             
             if data:
