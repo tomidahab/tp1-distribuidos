@@ -192,7 +192,6 @@ class Boundary:
                     continue
                 elif data == SIGTERM:
                     await self._send_marker(csvs_received, client_id, False)
-                    sigterms += 1
                     logging.info(self.green(f"SIGTERM received from client {addr[0]}:{addr[1]}"))
                     sock.close()
                     return

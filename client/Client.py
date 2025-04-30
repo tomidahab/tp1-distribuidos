@@ -222,8 +222,17 @@ class Client:
             formatted_data.append(formatted_movie)
         return formatted_data
 
-    def send_sigterm(self):
-        if self.skt is None:
-            raise Exception("Socket not connected")
-        logging.info("Sending SIGTERM to server")
-        self.protocol.send_all(self.skt, self.config.get_SIGTERM())
+    def _handle_sigterm(self, signum, frame):
+        """
+        Handle SIGTERM signal gracefully.
+        """
+        logging.info("Received SIGTERM, sending shutdown signal to server...")
+        if self.skt:
+            try:
+                self.protocol.send_all(self.skt, self.config.SIGTERM)
+                logging.info("SIGTERM message sent to server")
+            except Exception as e:
+                logging.error(f"Error sending SIGTERM message: {e}")
+
+        self.shutdown()
+        logging.info("Client shutdown successfully after SIGTERM")
