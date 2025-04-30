@@ -27,7 +27,6 @@ COLUMNS_Q5 = {'budget': 2, 'imdb_id':6, 'original_title': 8, 'overview': 9, 'rev
 EOF_MARKER = "EOF_MARKER"
 
 RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
-MAX_CSVS = 3
 MOVIES_CSV = 0
 CREDITS_CSV = 1
 RATINGS_CSV = 2
@@ -181,7 +180,8 @@ class Boundary:
     csvs_received = 0
     try:
         data = ''
-        while csvs_received < MAX_CSVS:
+        #TODO: chagne this to while skt connetion is open, or proto is connected.
+        while True:
             try:
                 data = await self._receive_csv_batch(sock, proto)
                 if data == EOF_MARKER:
