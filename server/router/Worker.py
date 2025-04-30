@@ -162,22 +162,18 @@ class RouterWorker:
             
             # Process message based on exchange type
             if self.exchange_type == "fanout":
-                # For fanout exchanges, send to all output queues
-                success = True
-                for queue_name in self.output_queues:
-                    publish_success = await self.rabbit_client.publish(
-                        exchange_name=self.exchange_name,
-                        routing_key=queue_name,
-                        message=Serializer.serialize(outgoing_message),
-                        persistent=True
-                    )
-                    if not publish_success:
-                        logging.error(f"Failed to forward message to queue: {queue_name}")
-                        success = False
+                # For fanout exchanges, just publish once with empty routing key
+                success = await self.rabbit_client.publish(
+                    exchange_name=self.exchange_name,
+                    routing_key="",  # Routing key is ignored for fanout exchanges
+                    message=Serializer.serialize(outgoing_message),
+                    persistent=True
+                )
                 
                 if success:
                     await message.ack()
                 else:
+                    logging.error(f"Failed to forward message to fanout exchange")
                     await message.reject(requeue=True)
             else:
                 # For direct exchanges, use the load balancer
@@ -261,10 +257,23 @@ class RouterWorker:
         if query:
             eof_message["query"] = query
         
-        # Get the flattened list of all queue names
-        all_queues = self._get_all_queue_names()
+        # For fanout exchanges, we only need to publish once with any routing key
+        if self.exchange_type == "fanout":
+            # Just publish once to the exchange - it will distribute to all bound queues
+            success = await self.rabbit_client.publish(
+                exchange_name=self.exchange_name,
+                routing_key="",  # Routing key is ignored for fanout exchanges
+                message=Serializer.serialize(eof_message),
+                persistent=True
+            )
+            if not success:
+                logging.error(f"Failed to send EOF marker to fanout exchange for client {client_id}")
+            else:
+                logging.info(f"EOF marker sent to fanout exchange for client {client_id}, will be delivered to all bound queues")
+            return
         
-        # Send to each queue
+        # For direct and other exchanges, send to each queue explicitly
+        all_queues = self._get_all_queue_names()
         for queue in all_queues:
             success = await self.rabbit_client.publish(
                 exchange_name=self.exchange_name,
