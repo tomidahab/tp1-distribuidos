@@ -3,6 +3,8 @@ services:
     env_file:
       - ./client/.env
     build: ./client
+    environment:
+      - CLIENT_ID=1
     depends_on:
       - boundary
     volumes:
@@ -12,6 +14,18 @@ services:
     env_file:
       - ./client/.env
     build: ./client
+    environment:
+      - CLIENT_ID=2
+    depends_on:
+      - boundary
+    volumes:
+      - ./client:/app
+  client3:
+    env_file:
+      - ./client/.env
+    build: ./client
+    environment:
+      - CLIENT_ID=3
     depends_on:
       - boundary
     volumes:
@@ -73,7 +87,7 @@ services:
     environment:
       - NUMBER_OF_PRODUCER_WORKERS=1
       - INPUT_QUEUE=boundary_credits_router
-      - OUTPUT_QUEUES=join_credits_worker_1_credits
+      - OUTPUT_QUEUES=join_credits_worker_1_credits,join_credits_worker_2_credits
       - BALANCER_TYPE=round_robin
     depends_on:
       - rabbitmq
@@ -96,7 +110,7 @@ services:
       - ROUTER_CONSUME_QUEUE_MOVIES=join_credits_worker_1_movies
       - ROUTER_CONSUME_QUEUE_CREDITS=join_credits_worker_1_credits
       - ROUTER_PRODUCER_QUEUE=count_router
-      - NUMBER_OF_CLIENTS=2
+      - NUMBER_OF_CLIENTS=3
     depends_on:
       - rabbitmq
     volumes:
@@ -104,6 +118,23 @@ services:
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
 
+  join_credits_worker_2:
+    build:
+      context: ./server
+      dockerfile: worker/join_credits/Dockerfile
+    env_file:
+      - ./server/worker/join_credits/.env
+    environment:
+      - ROUTER_CONSUME_QUEUE_MOVIES=join_credits_worker_2_movies
+      - ROUTER_CONSUME_QUEUE_CREDITS=join_credits_worker_2_credits
+      - ROUTER_PRODUCER_QUEUE=count_router
+      - NUMBER_OF_CLIENTS=3
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/worker/join_credits:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
 
   filter_by_year_worker_1:
     build:
@@ -199,7 +230,7 @@ services:
     environment:
       - NUMBER_OF_PRODUCER_WORKERS=1
       - INPUT_QUEUE=boundary_ratings_router
-      - OUTPUT_QUEUES=join_ratings_worker_1_ratings
+      - OUTPUT_QUEUES=join_ratings_worker_1_ratings,join_ratings_worker_2_ratings
       - BALANCER_TYPE=round_robin
     depends_on:
       - rabbitmq
@@ -219,7 +250,25 @@ services:
       - ROUTER_CONSUME_QUEUE_MOVIES=join_ratings_worker_1_movies
       - ROUTER_CONSUME_QUEUE_RATINGS=join_ratings_worker_1_ratings
       - ROUTER_PRODUCER_QUEUE=average_movies_by_rating_router
-      - NUMBER_OF_CLIENTS=2
+      - NUMBER_OF_CLIENTS=3
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/worker/join_ratings:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
+
+  join_ratings_worker_2:
+    build:
+      context: ./server
+      dockerfile: worker/join_ratings/Dockerfile
+    env_file:
+      - ./server/worker/join_ratings/.env
+    environment:
+      - ROUTER_CONSUME_QUEUE_MOVIES=join_ratings_worker_2_movies
+      - ROUTER_CONSUME_QUEUE_RATINGS=join_ratings_worker_2_ratings
+      - ROUTER_PRODUCER_QUEUE=average_movies_by_rating_router
+      - NUMBER_OF_CLIENTS=3
     depends_on:
       - rabbitmq
     volumes:
@@ -234,7 +283,7 @@ services:
     env_file:
       - ./server/router/.env
     environment:
-      - NUMBER_OF_PRODUCER_WORKERS=1
+      - NUMBER_OF_PRODUCER_WORKERS=2
       - INPUT_QUEUE=average_movies_by_rating_router
       - OUTPUT_QUEUES=[["average_movies_by_rating_worker_1"]]
       - BALANCER_TYPE=shard_by_ascii
@@ -344,7 +393,7 @@ services:
     environment:
       - NUMBER_OF_PRODUCER_WORKERS=2
       - INPUT_QUEUE=join_movies_router
-      - OUTPUT_QUEUES=join_ratings_worker_1_movies,join_credits_worker_1_movies
+      - OUTPUT_QUEUES=join_ratings_worker_1_movies,join_ratings_worker_2_movies,join_credits_worker_1_movies,join_credits_worker_2_movies
       - EXCHANGE_TYPE=fanout # ----------- OUR ONLY FANOUT ROUTER -----------
       - EXCHANGE_NAME=join_router_exchange
     depends_on:
@@ -362,7 +411,7 @@ services:
     env_file:
       - ./server/router/.env
     environment:
-      - NUMBER_OF_PRODUCER_WORKERS=1
+      - NUMBER_OF_PRODUCER_WORKERS=2
       - INPUT_QUEUE=count_router
       - OUTPUT_QUEUES=[["count_worker_1", "count_worker_2"],["count_worker_3", "count_worker_4"]]
       - BALANCER_TYPE=shard_by_ascii
