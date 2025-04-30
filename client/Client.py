@@ -16,11 +16,11 @@ QUERY_3 = os.getenv("QUERY_3", "3")
 QUERY_4 = os.getenv("QUERY_4", "4")
 QUERY_5 = os.getenv("QUERY_5", "5")
 
+
 class Client:
-    def __init__(self, name: str, age: int):
+    def __init__(self, name: str):
         self.skt = None
         self.name = name
-        self.age = age
         self.protocol = Protocol()
         self.config = Config()
         self.receiver_running = False
@@ -31,7 +31,7 @@ class Client:
         self.output_file_q5 = f"output/output_records_client_{self.name}_Q5.json"
         
     def __str__(self):
-        return f"Client(name={self.name}, age={self.age})"
+        return f"Client(name={self.name}"
     
     def connect(self, host: str, port: int):
         self.skt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -65,9 +65,13 @@ class Client:
         if self.skt is None:
             raise Exception("Socket not connected")
         logging.info(f"\033[94mSending CSV file: {file_path}\033[0m")
+        batch_sent = 0
         
         for batch in self._read_file_in_batches(file_path, self.config.get_batch_size()):
             self.protocol.send_all(self.skt, batch)
+            batch_sent += 1
+            if batch_sent % 50 == 0 and "ratings" in file_path:
+                logging.info(f"Sent {batch_sent} batches so far...")
         self.protocol.send_all(self.skt, self.config.get_EOF())
         logging.info(f"\033[94mCSV file sent successfully with EOF: {self.config.get_EOF()}\033[0m")
         
