@@ -146,7 +146,7 @@ class Worker:
                 else:
                     logging.warning(f"Received EOF for client {client_id} but no data found")
             elif sigterm:
-                response_message = self._add_metadata(client_id, "", False, True, QUERY_3)
+                response_message = self._add_metadata(client_id, "", False, True, QUERY_4)
                 logging.info(f"received sigterm from :{client_id}")
 
                 await self.rabbitmq.publish_to_queue(

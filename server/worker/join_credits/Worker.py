@@ -25,7 +25,7 @@ SIGTERM = os.getenv("SIGTERM", "SIGTERM")
 ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_data_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
-NUMBER_OF_CLIENTS = int(os.getenv("NUMBER_OF_CLIENTS"))
+NUMBER_OF_CLIENTS = int(os.getenv("NUMBER_OF_CLIENTS",2))
 
 class Worker:
     def __init__(self, 
