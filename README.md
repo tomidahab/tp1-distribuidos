@@ -56,3 +56,86 @@ Avoids arbitrary polling intervals
 Is more efficient (no waking up every second)
 Responds immediately to shutdown signals
 But yes, your current implementation with the 1-second sleep is a common pattern and works fine for most use cases. The sleep is there to avoid busy-waiting (consuming 100% CPU) while still allowing the worker to check its shutdown flag periodically.
+
+
+
+## System configuration options:
+
+1. Minimal Configuration (Light Resource Usage)
+``` bash
+./docker_compose_generator.sh \
+  --clients 1 \
+  --output docker-compose-minimal.yaml \
+  --filter-by-year 1 \
+  --filter-by-country 1 \
+  --join-credits 1 \
+  --join-ratings 1 \
+  --count 1 \
+  --average-movies-by-rating 1 \
+  --max-min 1 \
+  --top 1
+```
+This configuration uses minimal resources with just one worker of each type and a single client.
+
+2. High Throughput for Movie Filtering
+``` bash
+./docker_compose_generator.sh \
+  --clients 2 \
+  --output docker-compose-filter-heavy.yaml \
+  --filter-by-year 4 \
+  --filter-by-country 4 \
+  --join-credits 2 \
+  --join-ratings 2 \
+  --count 2
+```
+This configuration focuses on scaling up the initial filtering stages, which can be helpful if you have many movies to process.
+
+3. Analytics-Focused Configuration
+``` bash
+./docker_compose_generator.sh \
+  --clients 2 \
+  --output docker-compose-analytics.yaml \
+  --filter-by-year 1 \
+  --filter-by-country 1 \
+  --join-credits 2 \
+  --join-ratings 2 \
+  --count 3 \
+  --average-movies-by-rating 2 \
+  --max-min 2 \
+  --top 3
+```
+This configuration puts more workers on the analytics stages like counting, averages, and top actors.
+
+4. Include Sentiment Analysis
+``` bash
+./docker_compose_generator.sh \
+  --clients 2 \
+  --output docker-compose-sentiment.yaml \
+  --filter-by-year 1 \
+  --filter-by-country 1 \
+  --sentiment-analysis 3 \
+  --average-sentiment 3 \
+  --include-sentiment-analysis
+```
+This configuration enables sentiment analysis with multiple workers for processing movie reviews.
+
+5. Production-Like Balanced Configuration
+``` bash
+./docker_compose_generator.sh \
+  --clients 3 \
+  --output docker-compose-production.yaml \
+  --filter-by-year 3 \
+  --filter-by-country 3 \
+  --join-credits 3 \
+  --join-ratings 3 \
+  --count 6 \
+  --average-movies-by-rating 2 \
+  --max-min 2 \
+  --top 2 \
+  --average-sentiment 4 \
+  --include-sentiment-analysis
+```
+This represents a more production-like setup with balanced scaling across all components.
+
+
+
