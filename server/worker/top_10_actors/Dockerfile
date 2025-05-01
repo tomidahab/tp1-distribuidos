@@ -3,11 +3,11 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install dependencies
-COPY worker/top/requirements.txt .
+COPY worker/top_10_actors/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy worker Python files
-COPY worker/top/*.py .
+COPY worker/top_10_actors/*.py .
 
 ENV PYTHONUNBUFFERED=1
 

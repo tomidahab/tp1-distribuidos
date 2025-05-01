@@ -429,7 +429,7 @@ services:
       - ./server/worker/count/.env
     environment:
       - ROUTER_CONSUME_QUEUE=count_worker_1
-      - ROUTER_PRODUCER_QUEUE=top_router
+      - ROUTER_PRODUCER_QUEUE=top_10_actors_router
     depends_on:
       - rabbitmq
     volumes:
@@ -445,7 +445,7 @@ services:
       - ./server/worker/count/.env
     environment:
       - ROUTER_CONSUME_QUEUE=count_worker_2
-      - ROUTER_PRODUCER_QUEUE=top_router
+      - ROUTER_PRODUCER_QUEUE=top_10_actors_router
     depends_on:
       - rabbitmq
     volumes:
@@ -461,7 +461,7 @@ services:
       - ./server/worker/count/.env
     environment:
       - ROUTER_CONSUME_QUEUE=count_worker_3
-      - ROUTER_PRODUCER_QUEUE=top_router
+      - ROUTER_PRODUCER_QUEUE=top_10_actors_router
     depends_on:
       - rabbitmq
     volumes:
@@ -477,7 +477,7 @@ services:
       - ./server/worker/count/.env
     environment:
       - ROUTER_CONSUME_QUEUE=count_worker_4
-      - ROUTER_PRODUCER_QUEUE=top_router
+      - ROUTER_PRODUCER_QUEUE=top_10_actors_router
     depends_on:
       - rabbitmq
     volumes:
@@ -485,7 +485,7 @@ services:
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
 
-  top_router:
+  top_10_actors_router:
     build:
       context: ./server
       dockerfile: router/Dockerfile
@@ -493,8 +493,8 @@ services:
       - ./server/router/.env
     environment:
       - NUMBER_OF_PRODUCER_WORKERS=4
-      - INPUT_QUEUE=top_router
-      - OUTPUT_QUEUES=[["top_worker_1"]]
+      - INPUT_QUEUE=top_10_actors_router
+      - OUTPUT_QUEUES=[["top_10_actors_worker_1"]]
       - BALANCER_TYPE=shard_by_ascii
     depends_on:
       - rabbitmq
@@ -503,19 +503,19 @@ services:
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
 
-  top_worker_1:
+  top_10_actors_worker_1:
     build:
       context: ./server
-      dockerfile: worker/top/Dockerfile
+      dockerfile: worker/top_10_actors/Dockerfile
     env_file:
-      - ./server/worker/top/.env
+      - ./server/worker/top_10_actors/.env
     environment:
-      - ROUTER_CONSUME_QUEUE=top_worker_1
+      - ROUTER_CONSUME_QUEUE=top_10_actors_worker_1
       - ROUTER_PRODUCER_QUEUE=top_10_actors_collector_router
     depends_on:
       - rabbitmq
     volumes:
-      - ./server/worker/top:/app
+      - ./server/worker/top_10_actors:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
 

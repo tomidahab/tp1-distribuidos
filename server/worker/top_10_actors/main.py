@@ -57,5 +57,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    logging.info("Starting filter_by_country worker service...")
+    logging.info("Starting Top 10 Actors worker service...")
     asyncio.run(main())
