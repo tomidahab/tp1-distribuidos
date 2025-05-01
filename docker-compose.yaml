@@ -381,7 +381,6 @@ services:
 # ------------------------------------ Q4 -------------------------------------------
 # ===================================================================================
 
-  # TODO: separate the consumers by level instead of queries
   join_movies_router:
     build:
       context: ./server
