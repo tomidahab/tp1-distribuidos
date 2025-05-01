@@ -151,11 +151,11 @@ class Worker:
             
             if sigterm:
                 logging.info(f"\033[95mReceived SIGTERM marker for client_id '{client_id}'\033[0m")
-                message = self._add_metadata(client_id, data, False, True)
+                message_to_send = self._add_metadata(client_id, data, False, True)
                 await self.rabbitmq.publish(
                     exchange_name=self.exchange_name_producer,
                     routing_key=self.producer_queue_names[0],
-                    message=Serializer.serialize(message),
+                    message=Serializer.serialize(message_to_send),
                     persistent=True
                 )
                 await message.ack()

@@ -34,7 +34,7 @@ def main():
         # Start sender thread and get the thread object
         sender_thread = client.start_sender_thread(files_to_send)
         
-        sleep(1)
+        time.sleep(1)
         client._handle_sigterm(None,None)
         # Wait for sender to finish
         sender_thread.join()
