@@ -17,27 +17,24 @@ logging.basicConfig(
 
 # Constants and configuration
 ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE", "average_sentiment_worker")
-RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
+COLLECTOR_QUEUE = os.getenv("COLLECTOR_QUEUE", "average_sentiment_collector_router")
 QUERY_5 = os.getenv("QUERY_5", "5")
 
 class Worker:
-    def __init__(self, consumer_queue_name=ROUTER_CONSUME_QUEUE, response_queue_name=RESPONSE_QUEUE):
+    def __init__(self, consumer_queue_name=ROUTER_CONSUME_QUEUE, producer_queue_name=COLLECTOR_QUEUE):
         self._running = True
         self.consumer_queue_name = consumer_queue_name
-        self.response_queue_name = response_queue_name
+        self.producer_queue_name = producer_queue_name
         self.rabbitmq = RabbitMQClient()
         
-        # Initialize sentiment tracking attributes
-        self.sentiment_totals = {
-            "POSITIVE": {"sum": 0, "count": 0},
-            "NEGATIVE": {"sum": 0, "count": 0}
-        }
+        # Initialize client data dictionary to track sentiment data per client
+        self.client_data = {}
         
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
         signal.signal(signal.SIGTERM, self._handle_shutdown)
         
-        logging.info(f"Average Sentiment Worker initialized for queue '{consumer_queue_name}', response queue '{response_queue_name}'")
+        logging.info(f"Average Sentiment Worker initialized for queue '{consumer_queue_name}', producer queue '{self.producer_queue_name}'")
     
     async def run(self):
         """Run the worker, connecting to RabbitMQ and consuming messages"""
@@ -69,8 +66,8 @@ class Worker:
         if not queue:
             return False
             
-        response_queue = await self.rabbitmq.declare_queue(self.response_queue_name, durable=True)
-        if not response_queue:
+        producer_queue = await self.rabbitmq.declare_queue(self.producer_queue_name, durable=True)
+        if not producer_queue:
             return False
 
         # Set up consumer
@@ -99,44 +96,32 @@ class Worker:
             if eof_marker:
                 logging.info(f"Received EOF marker for client_id '{client_id}'")
                 
-                # Calculate final averages
-                positive_avg = 0
-                if self.sentiment_totals["POSITIVE"]["count"] > 0:
-                    positive_avg = self.sentiment_totals["POSITIVE"]["sum"] / self.sentiment_totals["POSITIVE"]["count"]
+                if client_id in self.client_data:
+                    # Calculate final averages
+                    client_sentiment_totals = self.client_data[client_id]
                     
-                negative_avg = 0
-                if self.sentiment_totals["NEGATIVE"]["count"] > 0:
-                    negative_avg = self.sentiment_totals["NEGATIVE"]["sum"] / self.sentiment_totals["NEGATIVE"]["count"]
-                
-                # Prepare detailed results
-                positive_count = self.sentiment_totals["POSITIVE"]["count"]
-                negative_count = self.sentiment_totals["NEGATIVE"]["count"]
-                
-                # Create the final response with the average results
-                result = [{
-                    "sentiment": "POSITIVE",
-                    "average_ratio": positive_avg,
-                    "movie_count": positive_count
-                }, {
-                    "sentiment": "NEGATIVE", 
-                    "average_ratio": negative_avg,
-                    "movie_count": negative_count
-                }]
-                
-                # Use the _add_metadata function to prepare the response
-                response_message = self._add_metadata(client_id, result, True, QUERY_5)
-                
-                await self.rabbitmq.publish_to_queue(
-                    queue_name=self.response_queue_name,
-                    message=Serializer.serialize(response_message),
-                    persistent=True
-                )
-                
-                # Reset the accumulators for the next client
-                self.sentiment_totals = {
-                    "POSITIVE": {"sum": 0, "count": 0},
-                    "NEGATIVE": {"sum": 0, "count": 0}
-                }
+                    # Create the result with sum and count for each sentiment type
+                    result = [{
+                        "sentiment": "POSITIVE",
+                        "sum": client_sentiment_totals["POSITIVE"]["sum"],
+                        "count": client_sentiment_totals["POSITIVE"]["count"]
+                    }, {
+                        "sentiment": "NEGATIVE", 
+                        "sum": client_sentiment_totals["NEGATIVE"]["sum"],
+                        "count": client_sentiment_totals["NEGATIVE"]["count"]
+                    }]
+                    
+                    # First: Send the data 
+                    await self.send_data(client_id, result, False, QUERY_5)
+                    
+                    # Second: Send message with EOF=True
+                    await self.send_data(client_id, [], True, QUERY_5)
+                    
+                    # Clean up client data after sending
+                    del self.client_data[client_id]
+                    logging.info(f"Sent sentiment data for client {client_id} and cleaned up client data")
+                else:
+                    logging.warning(f"Received EOF for client {client_id} but no data found")
                 
                 await message.ack()
                 return
@@ -153,14 +138,23 @@ class Worker:
                     
                     logging.debug(f"Processing movie: {movie.get('Movie', 'Unknown')}, sentiment: {sentiment}, ratio: {ratio}")
                     
-                    if sentiment in self.sentiment_totals:
-                        # Add to the running total
-                        self.sentiment_totals[sentiment]["sum"] += ratio
-                        self.sentiment_totals[sentiment]["count"] += 1
+                    if sentiment:
+                        if client_id not in self.client_data:
+                            self.client_data[client_id] = {
+                                "POSITIVE": {"sum": 0, "count": 0},
+                                "NEGATIVE": {"sum": 0, "count": 0}
+                            }
+                        
+                        if sentiment in self.client_data[client_id]:
+                            # Add to the running total
+                            self.client_data[client_id][sentiment]["sum"] += ratio
+                            self.client_data[client_id][sentiment]["count"] += 1
                 
                 # Log current state
-                positive_count = self.sentiment_totals["POSITIVE"]["count"]
-                negative_count = self.sentiment_totals["NEGATIVE"]["count"]
+                if client_id in self.client_data:
+                    positive_count = self.client_data[client_id]["POSITIVE"]["count"]
+                    negative_count = self.client_data[client_id]["NEGATIVE"]["count"]
+                    logging.debug(f"Client {client_id} stats - POSITIVE: {positive_count}, NEGATIVE: {negative_count}")
                 
                 # Acknowledge message
                 await message.ack()
@@ -172,6 +166,17 @@ class Worker:
         except Exception as e:
             logging.error(f"Error processing message: {e}")
             await message.reject(requeue=False)
+    
+    async def send_data(self, client_id, data, eof_marker=False, query=None):
+        """Send data to the producer queue with query in metadata"""
+        message = self._add_metadata(client_id, data, eof_marker, query)
+        success = await self.rabbitmq.publish_to_queue(
+            queue_name=self.producer_queue_name,
+            message=Serializer.serialize(message),
+            persistent=True
+        )
+        if not success:
+            logging.error(f"Failed to send data with query '{query}' for client {client_id}")
     
     def _add_metadata(self, client_id, data, eof_marker=False, query=None):
         """Prepare the message to be sent to the output queue - standardized across workers"""

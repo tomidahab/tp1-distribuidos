@@ -103,7 +103,6 @@ class SentimentWorker:
                 # Pass through EOF marker to response queue
                 response_message = {
                     "client_id": client_id,
-                    "query": "Q5",
                     "data": [],
                     "EOF_MARKER": True
                 }
@@ -122,12 +121,11 @@ class SentimentWorker:
                 logging.info(f"Processing {len(data)} movies for sentiment analysis")
                 processed_data = await self._analyze_sentiment_and_calculate_ratios(data)
                 
-                # Prepare response message
-                response_message = {
-                    "client_id": client_id,
-                    "query": "Q5",
-                    "data": processed_data
-                }
+                # Prepare response message using the standardized _add_metadata method
+                response_message = self._add_metadata(
+                    client_id=client_id,
+                    data=processed_data
+                )
                 
                 # Send processed data to response queue
                 success = await self.rabbitmq.publish_to_queue(
@@ -190,7 +188,7 @@ class SentimentWorker:
                     
                     # Create processed movie record
                     processed_movie = {
-                        "Movie": original_title,
+                        "name": original_title, 
                         "sentiment": sentiment_label,
                         "ratio": ratio,
                         "confidence": confidence
@@ -206,9 +204,8 @@ class SentimentWorker:
             await asyncio.sleep(0.01)
         
         total_time = time.time() - start_time
-        avg_time_per_movie = total_time / total_movies if total_movies > 0 else 0
         
-        logging.info(f"\033[32mCompleted sentiment analysis of {total_movies} movies in {total_time:.2f} seconds - Average: {avg_time_per_movie:.2f} seconds per movie\033[0m")
+        logging.info(f"\033[32mCompleted sentiment analysis of {total_movies} movies in {total_time:.2f} seconds\033[0m")
         
         return processed_movies
     
@@ -222,6 +219,13 @@ class SentimentWorker:
             return ("NEUTRAL", 0.5)
         
         try:
+            # Truncate text to avoid exceeding the model's maximum token limit (512)
+            # A simple character-based truncation as a reasonable approximation
+            max_chars = 1000  # Approximate character count that would result in ~500 tokens
+            if len(text) > max_chars:
+                logging.debug(f"Truncating overview text from {len(text)} to {max_chars} characters")
+                text = text[:max_chars]
+            
             # Use the Hugging Face transformers pipeline directly - exact same approach from our test
             result = self.sentiment_pipeline(text)[0]
             label = result['label']  # Will be POSITIVE or NEGATIVE
@@ -232,6 +236,16 @@ class SentimentWorker:
         except Exception as e:
             logging.error(f"Error during sentiment analysis: {e}")
             return ("NEUTRAL", 0.5)
+        
+    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+        """Prepare the message to be sent to the output queue - standardized across workers"""
+        message = {        
+            "client_id": client_id,
+            "data": data,
+            "EOF_MARKER": eof_marker,
+            "query": query,
+        }
+        return message
     
     def _handle_shutdown(self, *_):
         logging.info(f"Shutting down sentiment analysis worker...")
