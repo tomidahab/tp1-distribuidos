@@ -2,6 +2,8 @@ import socket
 import os
 import threading
 import json
+import enum
+import pathlib
 from datetime import datetime
 from Protocol import Protocol
 import logging
@@ -10,11 +12,11 @@ from Config import Config
 
 logging.basicConfig(level=logging.INFO)
 
-# Constants
-QUERY_1 = os.getenv("QUERY_1", "1")
-QUERY_3 = os.getenv("QUERY_3", "3")
-QUERY_4 = os.getenv("QUERY_4", "4")
-QUERY_5 = os.getenv("QUERY_5", "5")
+class QueryType(enum.Enum):
+    QUERY_1 = os.getenv("QUERY_1", "1")
+    QUERY_3 = os.getenv("QUERY_3", "3")
+    QUERY_4 = os.getenv("QUERY_4", "4")
+    QUERY_5 = os.getenv("QUERY_5", "5")
 
 class Client:
     def __init__(self, name: str):
@@ -24,11 +26,18 @@ class Client:
         self.config = Config()
         self.receiver_running = False
         self.receiver_thread = None
-        self.output_file_q1 = f"output/output_records_client_{self.name}_Q1.json"
-        self.output_file_q3 = f"output/output_records_client_{self.name}_Q3.json"
-        self.output_file_q4 = f"output/output_records_client_{self.name}_Q4.json"
-        self.output_file_q5 = f"output/output_records_client_{self.name}_Q5.json"
         
+        self.output_dir = pathlib.Path("output")
+        
+        self.output_dir.mkdir(exist_ok=True)
+        
+        self.output_files = {
+            QueryType.QUERY_1: self.output_dir / f"output_records_client_{self.name}_Q1.json",
+            QueryType.QUERY_3: self.output_dir / f"output_records_client_{self.name}_Q3.json",
+            QueryType.QUERY_4: self.output_dir / f"output_records_client_{self.name}_Q4.json",
+            QueryType.QUERY_5: self.output_dir / f"output_records_client_{self.name}_Q5.json",
+        }
+    
     def __str__(self):
         return f"Client(name={self.name})"
     
@@ -59,7 +68,6 @@ class Client:
             if self.receiver_thread.is_alive():
                 logging.warning("Receiver thread did not terminate gracefully")
 
-    # Existing methods
     def _send_csv(self, file_path: str = None):
         if self.skt is None:
             raise Exception("Socket not connected")
@@ -99,7 +107,6 @@ class Client:
         except IOError as e:
             raise IOError(f"Error reading file {file_path}: {e}")
     
-    # New wrapper methods
     def start_sender_thread(self, file_paths=None):
         """
         Wrapper method to send data files in a separate thread
@@ -133,31 +140,24 @@ class Client:
     
     def _receive_loop(self):
         """Continuously receive messages and log them to a file based on query"""
+        # Define handlers for each query type using a dictionary dispatch
+        query_handlers = {
+            QueryType.QUERY_1.value: self._handle_query_1,
+            QueryType.QUERY_3.value: self._handle_query_3,
+            QueryType.QUERY_4.value: self._handle_query_4,
+            QueryType.QUERY_5.value: self._handle_query_5,
+        }
+        
         try:
             while self.receiver_running and self.skt:
                 try:
                     query, response_data = self.protocol.recv_response(self.skt)
                     try:
-
                         parsed_data = json.loads(response_data)
-                        # Process movies based on query
-                        if query == QUERY_1:
-                            parsed_data = self._format_data_query_1(parsed_data)
-                            self._write_to_file(self.output_file_q1, parsed_data)
-                        elif query == QUERY_3:
-                            #parse data if needed
-                            # parsed_data = self._format_data_query_3(parsed_data) 
-                            self._write_to_file(self.output_file_q3, parsed_data)
-                            logging.info(f"\033[94mReceived data for Query {QUERY_3}\033[0m")
-                        elif query == QUERY_4:
-                            parsed_data = self._format_data_query_4(parsed_data)
-                            self._write_to_file(self.output_file_q4, parsed_data)
-                            logging.info(f"\033[94mReceived data for Query {QUERY_4}\033[0m")
-                        elif query == QUERY_5:
-                            #parse data if needed
-                            # parsed_data = self._format_data_query_5(parsed_data) 
-                            self._write_to_file(self.output_file_q5, parsed_data)
-                            logging.info(f"\033[94mReceived data for Query {QUERY_5}\033[0m")
+                        
+                        # Use dictionary dispatch to handle the query
+                        if query in query_handlers:
+                            query_handlers[query](parsed_data)
                             
                     except json.JSONDecodeError as e:
                         logging.error(f"Failed to parse response as JSON: {e}")
@@ -173,7 +173,30 @@ class Client:
         
         logging.info("Receiver thread stopping")
 
-    def _write_to_file(self, file_path: str, data: list):
+    def _handle_query_1(self, data):
+        """Handle Query 1 data processing"""
+        formatted_data = self._format_data_query_1(data)
+        self._write_to_file(self.output_files[QueryType.QUERY_1], formatted_data)
+
+    def _handle_query_3(self, data):
+        """Handle Query 3 data processing"""
+        # No formatting needed for now
+        self._write_to_file(self.output_files[QueryType.QUERY_3], data)
+        logging.info(f"\033[94mReceived data for Query {QueryType.QUERY_3.value}\033[0m")
+
+    def _handle_query_4(self, data):
+        """Handle Query 4 data processing"""
+        formatted_data = self._format_data_query_4(data)
+        self._write_to_file(self.output_files[QueryType.QUERY_4], formatted_data)
+        logging.info(f"\033[94mReceived data for Query {QueryType.QUERY_4.value}\033[0m")
+
+    def _handle_query_5(self, data):
+        """Handle Query 5 data processing"""
+        # No formatting needed for now
+        self._write_to_file(self.output_files[QueryType.QUERY_5], data)
+        logging.info(f"\033[94mReceived data for Query {QueryType.QUERY_5.value}\033[0m")
+
+    def _write_to_file(self, file_path: pathlib.Path, data: list):
         """
         Write processed data to a file
         """
