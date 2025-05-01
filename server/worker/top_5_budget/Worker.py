@@ -175,6 +175,7 @@ class Worker:
 
     async def send_dic(self, client_id):
         """Send data to the eq_year queue in our exchange"""
+        logging.info(f"for debug, client dic: {self.dictionary_countries_budget_by_client.get(client_id,"THE CLIENT DIC IS EMPTY")}")
         top_5_countries = dict(sorted(self.dictionary_countries_budget_by_client[client_id].items(), key=lambda kv: kv[1], reverse=True)[:5])
         logging.info(f"sending res = {str(top_5_countries)}")
         message = self._add_metadata(client_id, top_5_countries, query=QUERY_2)
