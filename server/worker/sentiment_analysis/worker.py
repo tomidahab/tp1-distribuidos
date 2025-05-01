@@ -188,7 +188,7 @@ class SentimentWorker:
                     
                     # Create processed movie record
                     processed_movie = {
-                        "Movie": original_title,
+                        "name": original_title, 
                         "sentiment": sentiment_label,
                         "ratio": ratio,
                         "confidence": confidence
@@ -204,9 +204,8 @@ class SentimentWorker:
             await asyncio.sleep(0.01)
         
         total_time = time.time() - start_time
-        avg_time_per_movie = total_time / total_movies if total_movies > 0 else 0
         
-        logging.info(f"\033[32mCompleted sentiment analysis of {total_movies} movies in {total_time:.2f} seconds - Average: {avg_time_per_movie:.2f} seconds per movie\033[0m")
+        logging.info(f"\033[32mCompleted sentiment analysis of {total_movies} movies in {total_time:.2f} seconds\033[0m")
         
         return processed_movies
     
