@@ -392,7 +392,7 @@ services:
       - NUMBER_OF_PRODUCER_WORKERS=2
       - INPUT_QUEUE=join_movies_router
       - OUTPUT_QUEUES=join_ratings_worker_1_movies,join_ratings_worker_2_movies,join_credits_worker_1_movies,join_credits_worker_2_movies
-      - EXCHANGE_TYPE=fanout # ----------- OUR ONLY FANOUT ROUTER -----------
+      - EXCHANGE_TYPE=fanout
       - EXCHANGE_NAME=join_router_exchange
     depends_on:
       - rabbitmq
@@ -694,6 +694,3 @@ services:
       - ./server/worker/collector_average_sentiment_worker:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
-
-#collector_average_sentiment_worker
-#average_sentiment_collector_router-1
