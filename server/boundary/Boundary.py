@@ -141,38 +141,42 @@ class Boundary:
             await message.ack()
             return
         
-        # Convert data to list if it's not already
-        if not isinstance(data, list):
-            data = [data]
+        # Process and send the data to the client
+        await self._send_response_to_client(client_id, data, query)
         
-        # Find the client socket by client_id
-        client_socket = None
-        for client_dict in self._client_sockets:
-            if client_id in client_dict:
-                client_socket = client_dict[client_id]
-                break
-        
-        # Send the data to the client if the socket is found
-        if client_socket:
-            try:
-                # Prepare data for sending
-                proto = self.protocol(asyncio.get_running_loop())
-                
-                serialized_data = json.dumps(data)
-                await proto.send_all(client_socket, serialized_data, query)
-                
-            except Exception as e:
-                logging.error(f"Failed to send data to client {client_id}: {e}")
-        else:
-            logging.warning(f"Client socket not found for client ID: {client_id}")
-        
-        # Acknowledge message
         await message.ack()
         
     except Exception as e:
         logging.error(f"Error processing response message: {e}")
-        # Reject message but don't requeue
         await message.reject(requeue=False)
+
+  async def _send_response_to_client(self, client_id, data, query):
+    """Find the client socket and send the response data"""
+    # Convert data to list if it's not already
+    if not isinstance(data, list):
+        data = [data]
+    
+    client_socket = self._find_client_socket(client_id)
+    
+    # Send the data to the client if the socket is found
+    if client_socket:
+        try:
+            # Prepare data for sending
+            proto = self.protocol(asyncio.get_running_loop())
+            serialized_data = json.dumps(data)
+            await proto.send_all(client_socket, serialized_data, query)
+            
+        except Exception as e:
+            logging.error(f"Failed to send data to client {client_id}: {e}")
+    else:
+        logging.warning(f"Client socket not found for client ID: {client_id}")
+
+  def _find_client_socket(self, client_id):
+    """Find the client socket for a given client_id"""
+    for client_dict in self._client_sockets:
+        if client_id in client_dict:
+            return client_dict[client_id]
+    return None
 
 # ------------------------------------------------------------------ #
 # per‑client logic                                                   #
@@ -184,7 +188,7 @@ class Boundary:
     csvs_received = 0
     try:
         data = ''
-        #TODO: chagne this to while skt connetion is open, or proto is connected.
+        #TODO: change this to while skt connection is open, or proto is connected.
         while True:
             try:
                 data = await self._receive_csv_batch(sock, proto)
@@ -194,28 +198,7 @@ class Boundary:
                     logging.info(self.green(f"EOF received for CSV #{csvs_received} from client {addr[0]}:{addr[1]}"))
                     continue
 
-                if csvs_received == MOVIES_CSV:
-                    filtered_data_q1, filtered_data_q5 = self._project_to_columns(data, [COLUMNS_Q1, COLUMNS_Q5])
-                    
-                    # Send data for Q1 to the movies router
-                    prepared_data_q1 = self._addMetaData(client_id, filtered_data_q1)
-                    await self._send_data_to_rabbitmq_queue(prepared_data_q1, self.movies_router_queue)
-                    
-                    # Send data for Q5 to the reviews router
-                    prepared_data_q5 = self._addMetaData(client_id, filtered_data_q5)
-                    await self._send_data_to_rabbitmq_queue(prepared_data_q5, self.movies_router_q5_queue)
-                
-                elif csvs_received == CREDITS_CSV:
-                    filtered_data = self._project_to_columns(data, COLUMNS_Q4)
-                    filtered_data = self._remove_cast_extra_data(filtered_data)
-                    prepared_data = self._addMetaData(client_id, filtered_data)
-                    await self._send_data_to_rabbitmq_queue(prepared_data, self.credits_router_queue)
-                
-                elif csvs_received == RATINGS_CSV:
-                    filtered_data = self._project_to_columns(data, COLUMNS_Q3)
-                    filtered_data = self._remove_ratings_with_0_rating(filtered_data)
-                    prepared_data = self._addMetaData(client_id, filtered_data)
-                    await self._send_data_to_rabbitmq_queue(prepared_data, self.ratings_router_queue)
+                await self._process_csv_data(data, csvs_received, client_id)
                 
             except ConnectionError:
                 logging.info(f"Client {addr[0]}:{addr[1]} disconnected")
@@ -224,6 +207,41 @@ class Boundary:
     except Exception as exc:
         logging.error(f"Client {addr[0]}:{addr[1]} error: {exc}")
         logging.exception(exc)
+
+  async def _process_csv_data(self, data, csvs_received, client_id):
+    """Process CSV data based on which CSV file is being processed"""
+    if csvs_received == MOVIES_CSV:
+        await self._process_movies_csv(data, client_id)
+    elif csvs_received == CREDITS_CSV:
+        await self._process_credits_csv(data, client_id)
+    elif csvs_received == RATINGS_CSV:
+        await self._process_ratings_csv(data, client_id)
+
+  async def _process_movies_csv(self, data, client_id):
+    """Process movies CSV data for Q1 and Q5"""
+    filtered_data_q1, filtered_data_q5 = self._project_to_columns(data, [COLUMNS_Q1, COLUMNS_Q5])
+    
+    # Send data for Q1 to the movies router
+    prepared_data_q1 = self._addMetaData(client_id, filtered_data_q1)
+    await self._send_data_to_rabbitmq_queue(prepared_data_q1, self.movies_router_queue)
+    
+    # Send data for Q5 to the reviews router
+    prepared_data_q5 = self._addMetaData(client_id, filtered_data_q5)
+    await self._send_data_to_rabbitmq_queue(prepared_data_q5, self.movies_router_q5_queue)
+
+  async def _process_credits_csv(self, data, client_id):
+    """Process credits CSV data for Q4"""
+    filtered_data = self._project_to_columns(data, COLUMNS_Q4)
+    filtered_data = self._remove_cast_extra_data(filtered_data)
+    prepared_data = self._addMetaData(client_id, filtered_data)
+    await self._send_data_to_rabbitmq_queue(prepared_data, self.credits_router_queue)
+
+  async def _process_ratings_csv(self, data, client_id):
+    """Process ratings CSV data for Q3"""
+    filtered_data = self._project_to_columns(data, COLUMNS_Q3)
+    filtered_data = self._remove_ratings_with_0_rating(filtered_data)
+    prepared_data = self._addMetaData(client_id, filtered_data)
+    await self._send_data_to_rabbitmq_queue(prepared_data, self.ratings_router_queue)
 
   async def _send_eof_marker(self, csvs_received, client_id):
         prepared_data = self._addMetaData(client_id, None, True)
@@ -288,11 +306,6 @@ class Boundary:
     """
     Extract only the columns defined in query_columns from the CSV data.
     If query_columns is a list, returns multiple result sets, one for each element.
-    
-    Returns an array of dictionaries (or multiple arrays if query_columns is a list),
-    where each dictionary represents a row with column names as keys and the corresponding values.
-    
-    Special processing is done for Q5 data to ensure budget and revenue values are valid.
     """
     # Use Python's csv module to correctly parse the CSV data
     input_file = StringIO(data)
@@ -300,65 +313,75 @@ class Boundary:
     
     # Check if query_columns is a list of column mappings or a single mapping
     if isinstance(query_columns, list):
-        # Initialize result arrays - one for each element in query_columns list
-        results = [[] for _ in range(len(query_columns))]
-        
-        for row in csv_reader:
-            if not row:
-                continue
-                
-            # Process each query column set
-            for i, columns in enumerate(query_columns):
-                # Skip if row doesn't have enough columns
-                if len(row) <= max(columns.values()):
-                    continue
-                
-                # Apply different processing based on which column set we're dealing with
-                if 'budget' in columns and 'revenue' in columns:  # This is Q5
-                    # Create a dictionary for Q5 with required columns
-                    row_dict = {col_name: row[col_idx] for col_name, col_idx in columns.items()}
-                    
-                    # Check if any field is empty, null or nan
-                    if any(not row_dict.get(field, '') for field in columns.keys()):
-                        continue  # Skip this row if any field is empty
-                    
-                    # Check if budget or revenue is 0 or not a valid number
-                    try:
-                        budget = float(row_dict.get('budget', '0'))
-                        revenue = float(row_dict.get('revenue', '0'))
-                        
-                        # Skip rows where budget or revenue is 0
-                        if budget <= 0 or revenue <= 0:
-                            continue
-                            
-                        # Store the numeric values back in the dictionary
-                        row_dict['budget'] = budget
-                        row_dict['revenue'] = revenue
-                        
-                        # Only append if all checks pass
-                        results[i].append(row_dict)
-                    except ValueError:
-                        # Skip if budget or revenue is not a valid number
-                        continue
-                else:  # This is Q1 or any other query
-                    # Create a standard dictionary for this row
-                    row_dict = {col_name: row[col_idx] for col_name, col_idx in columns.items()}
-                    results[i].append(row_dict)
-        
-        return results
+        return self._project_multiple_column_sets(csv_reader, query_columns)
     else:
-        # Single query column set - maintain backward compatibility
-        result = []
-        
-        for row in csv_reader:
-            if not row or len(row) <= max(query_columns.values()):
+        return self._project_single_column_set(csv_reader, query_columns)
+
+  def _project_multiple_column_sets(self, csv_reader, query_columns_list):
+    """Process multiple column sets from CSV data"""
+    # Initialize result arrays - one for each element in query_columns list
+    results = [[] for _ in range(len(query_columns_list))]
+    
+    for row in csv_reader:
+        if not row:
+            continue
+            
+        # Process each query column set
+        for i, columns in enumerate(query_columns_list):
+            # Skip if row doesn't have enough columns
+            if len(row) <= max(columns.values()):
                 continue
-                
-            # Create a dictionary for this row with column names as keys
-            row_dict = {col_name: row[col_idx] for col_name, col_idx in query_columns.items()}
-            result.append(row_dict)
+            
+            if 'budget' in columns and 'revenue' in columns:  # This is Q5
+                row_dict = self._process_q5_columns(row, columns)
+                if row_dict:  # Only append if processing returned valid data
+                    results[i].append(row_dict)
+            else:  # This is Q1
+                row_dict = {col_name: row[col_idx] for col_name, col_idx in columns.items()}
+                results[i].append(row_dict)
+    
+    return results
+
+  def _process_q5_columns(self, row, columns):
+    """Process Q5 specific columns with budget and revenue validation"""
+    row_dict = {col_name: row[col_idx] for col_name, col_idx in columns.items()}
+    
+    # Check if any field is empty, null or nan
+    if any(not row_dict.get(field, '') for field in columns.keys()):
+        return None  # Skip this row if any field is empty
+    
+    # Check if budget or revenue is 0 or not a valid number
+    try:
+        budget = float(row_dict.get('budget', '0'))
+        revenue = float(row_dict.get('revenue', '0'))
         
-        return result
+        # Skip rows where budget or revenue is 0
+        if budget <= 0 or revenue <= 0:
+            return None
+            
+        # Store the numeric values back in the dictionary
+        row_dict['budget'] = budget
+        row_dict['revenue'] = revenue
+        
+        # Return the processed row
+        return row_dict
+    except ValueError:
+        # Skip if budget or revenue is not a valid number
+        return None
+
+  def _project_single_column_set(self, csv_reader, query_columns):
+    """Process a single column set from CSV data"""
+    result = []
+    
+    for row in csv_reader:
+        if not row or len(row) <= max(query_columns.values()):
+            continue
+            
+        # Create a dictionary for this row with column names as keys
+        row_dict = {col_name: row[col_idx] for col_name, col_idx in query_columns.items()}
+        result.append(row_dict)
+    
+    return result
   
   def _addMetaData(self, client_id, data, is_eof_marker=False):
     message = {        
