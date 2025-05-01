@@ -25,15 +25,10 @@ COLUMNS_Q3 = {'id': 1, 'rating': 2}
 COLUMNS_Q4 = {"cast": 0, "movie_id": 2}
 COLUMNS_Q5 = {'budget': 2, 'imdb_id':6, 'original_title': 8, 'overview': 9, 'revenue': 15}
 EOF_MARKER = "EOF_MARKER"
-<<<<<<< HEAD
 SIGTERM = "SIGTERM"
 
 RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
 MAX_CSVS = 3
-=======
-
-RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
->>>>>>> origin/main
 MOVIES_CSV = 0
 CREDITS_CSV = 1
 RATINGS_CSV = 2
