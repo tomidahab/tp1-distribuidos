@@ -219,6 +219,13 @@ class SentimentWorker:
             return ("NEUTRAL", 0.5)
         
         try:
+            # Truncate text to avoid exceeding the model's maximum token limit (512)
+            # A simple character-based truncation as a reasonable approximation
+            max_chars = 1000  # Approximate character count that would result in ~500 tokens
+            if len(text) > max_chars:
+                logging.debug(f"Truncating overview text from {len(text)} to {max_chars} characters")
+                text = text[:max_chars]
+            
             # Use the Hugging Face transformers pipeline directly - exact same approach from our test
             result = self.sentiment_pipeline(text)[0]
             label = result['label']  # Will be POSITIVE or NEGATIVE
