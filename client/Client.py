@@ -62,7 +62,6 @@ class Client:
             self.skt = None
             
         # Wait for receiver thread to finish if it exists
-        # TODO: shutdown the socket so it does not get stuck in the recv when no more data is sent
         if self.receiver_thread and self.receiver_thread.is_alive():
             self.receiver_thread.join()
             if self.receiver_thread.is_alive():
@@ -165,8 +164,12 @@ class Client:
                 except socket.timeout:
                     # Just continue if we get a timeout
                     continue
-                except ConnectionError as e:
-                    logging.error(f"Connection error in receiver thread: {e}")
+                except (ConnectionError, socket.error, OSError) as e:
+                    # Handle socket errors including when socket is closed
+                    if not self.receiver_running:
+                        logging.info(f"Socket communication ended due to shutdown: {e}")
+                    else:
+                        logging.error(f"Connection error in receiver thread: {e}")
                     break
         except Exception as e:
             logging.error(f"Error in receiver thread: {e}")
