@@ -74,26 +74,25 @@ class Worker:
             
         return True
     
-    async def _setup_rabbitmq(self, retry_count=1):
+    async def _setup_rabbitmq(self):
         """Set up RabbitMQ connection and consumer"""
-        # Connect to RabbitMQ
+        # Connect to RabbitMQ - exponential backoff is now handled by the client
         connected = await self.rabbitmq.connect()
         if not connected:
-            logging.error(f"Failed to connect to RabbitMQ, retrying in {retry_count} seconds...")
-            wait_time = min(30, 2 ** retry_count)
-            await asyncio.sleep(wait_time)
-            return await self._setup_rabbitmq(retry_count + 1)
+            logging.error("Failed to connect to RabbitMQ after multiple retries")
+            return False
         
         # -------------------- CONSUMER --------------------
-        # Declare all queues (idempotent operation)
+        # Declare all consumer queues (idempotent operation)
         for queue_name in self.consumer_queue_names:
             queue = await self.rabbitmq.declare_queue(queue_name, durable=True)
             if not queue:
+                logging.error(f"Failed to declare consumer queue '{queue_name}'")
                 return False
         # --------------------------------------------------
 
         # -------------------- PRODUCER --------------------
-        # Declare exchange (idempotent operation)
+        # Declare exchange for producer
         exchange = await self.rabbitmq.declare_exchange(
             name=self.exchange_name_producer,
             exchange_type=self.exchange_type_producer,
@@ -103,9 +102,10 @@ class Worker:
             logging.error(f"Failed to declare exchange '{self.exchange_name_producer}'")
             return False
         
-        # Declare the producer queue (router input queue)
+        # Declare output queues and bind to exchange
         queue = await self.rabbitmq.declare_queue(self.producer_queue_name, durable=True)
         if not queue:
+            logging.error(f"Failed to declare producer queue '{self.producer_queue_name}'")
             return False        
         
         # Bind queue to exchange

@@ -386,13 +386,15 @@ class Boundary:
 # Rabbit-Related-Section                                                  #
 # ----------------------------------------------------------------------- #
 
-  async def _setup_rabbitmq(self, retry_count=1):
+  async def _setup_rabbitmq(self):
+    """
+    Set up connection to RabbitMQ and declare all necessary queues.
+    Connection retries are now handled by the RabbitMQClient
+    """
+    # Connect to RabbitMQ (with built-in retry logic)
     connected = await self.rabbitmq.connect()
     if not connected:
-        logging.error(f"Failed to connect to RabbitMQ, retrying in {retry_count} seconds...")
-        wait_time = min(30, 2 ** retry_count)
-        await asyncio.sleep(wait_time)
-        return await self._setup_rabbitmq(retry_count + 1)
+        raise ConnectionError("Failed to connect to RabbitMQ after multiple retries")
     
     # Declare all necessary queues
     await self.rabbitmq.declare_queue(self.movies_router_queue, durable=True)

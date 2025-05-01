@@ -63,15 +63,13 @@ class Worker:
             
         return True
     
-    async def _setup_rabbitmq(self, retry_count=1):
+    async def _setup_rabbitmq(self):
         """Set up RabbitMQ connection and consumer"""
-        # Connect to RabbitMQ
+        # Connect to RabbitMQ - exponential backoff is now handled by the client
         connected = await self.rabbitmq.connect()
         if not connected:
-            logging.error(f"Failed to connect to RabbitMQ, retrying in {retry_count} seconds...")
-            wait_time = min(30, 2 ** retry_count)
-            await asyncio.sleep(wait_time)
-            return await self._setup_rabbitmq(retry_count + 1)
+            logging.error("Failed to connect to RabbitMQ after multiple retries")
+            return False
         
         # -------------------- CONSUMER --------------------
         # Declare input queue
@@ -82,7 +80,7 @@ class Worker:
         # --------------------------------------------------
 
         # -------------------- PRODUCER --------------------
-        # Declare exchange
+        # Declare exchange for producer
         exchange = await self.rabbitmq.declare_exchange(
             name=self.exchange_name_producer,
             exchange_type=self.exchange_type_producer,
@@ -92,22 +90,24 @@ class Worker:
             logging.error(f"Failed to declare exchange '{self.exchange_name_producer}'")
             return False
         
-        # Declare output queues
-        for queue_name in self.producer_queue_name:
-            queue = await self.rabbitmq.declare_queue(queue_name, durable=True)
-            if not queue:
-                logging.error(f"Failed to declare producer queue '{queue_name}'")
-                return False        
-            
-            # Bind queues to exchange
-            success = await self.rabbitmq.bind_queue(
-                queue_name=queue_name,
-                exchange_name=self.exchange_name_producer,
-                routing_key=queue_name
-            )
-            if not success:
-                logging.error(f"Failed to bind queue '{queue_name}' to exchange '{self.exchange_name_producer}'")
-                return False
+        # Handle producer_queue_name as a string even if passed as a list
+        producer_queue = self.producer_queue_name[0] if isinstance(self.producer_queue_name, list) else self.producer_queue_name
+        
+        # Declare output queue and bind to exchange
+        queue = await self.rabbitmq.declare_queue(producer_queue, durable=True)
+        if not queue:
+            logging.error(f"Failed to declare producer queue '{producer_queue}'")
+            return False        
+        
+        # Bind queue to exchange
+        success = await self.rabbitmq.bind_queue(
+            queue_name=producer_queue,
+            exchange_name=self.exchange_name_producer,
+            routing_key=producer_queue
+        )
+        if not success:
+            logging.error(f"Failed to bind queue '{producer_queue}' to exchange '{self.exchange_name_producer}'")
+            return False
         # --------------------------------------------------
         
         # Set up consumer for the input queue

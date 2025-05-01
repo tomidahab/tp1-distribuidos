@@ -54,15 +54,13 @@ class SentimentWorker:
             
         return True
     
-    async def _setup_rabbitmq(self, retry_count=1):
+    async def _setup_rabbitmq(self):
         """Set up RabbitMQ connection and consumer"""
-        # Connect to RabbitMQ
+        # Connect to RabbitMQ - exponential backoff is now handled by the client
         connected = await self.rabbitmq.connect()
         if not connected:
-            logging.error(f"Failed to connect to RabbitMQ, retrying in {retry_count} seconds...")
-            wait_time = min(30, 2 ** retry_count)
-            await asyncio.sleep(wait_time)
-            return await self._setup_rabbitmq(retry_count + 1)
+            logging.error("Failed to connect to RabbitMQ after multiple retries")
+            return False
         
         # Declare queues (idempotent operation)
         queue = await self.rabbitmq.declare_queue(self.consumer_queue_name, durable=True)

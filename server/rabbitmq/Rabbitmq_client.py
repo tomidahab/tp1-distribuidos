@@ -18,8 +18,7 @@ class RabbitMQClient:
 
         logging.info(f"RabbitMQ client initialized for {host}:{port}")
     
-    async def connect(self) -> bool:
-        """Establish connection to RabbitMQ server"""
+    async def connect(self, retry_count=0) -> bool:
         try:
             if self._connection and not self._connection.is_closed:
                 return True
@@ -33,8 +32,13 @@ class RabbitMQClient:
             logging.info(f"Connected to RabbitMQ at {self.host}:{self.port}")
             return True
         except Exception as e:
+            # Exponential backoff with a maximum wait time of 30 seconds
+            wait_time = min(30, 2 ** retry_count)
             logging.error(f"Failed to connect to RabbitMQ: {e}")
-            return False
+            logging.info(f"Retrying connection in {wait_time} seconds... (Attempt {retry_count + 1})")
+            
+            await asyncio.sleep(wait_time)
+            return await self.connect(retry_count + 1)
     
     async def close(self):
         """Close the RabbitMQ connection"""
