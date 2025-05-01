@@ -2,17 +2,18 @@ from Client import Client
 import logging
 from Config import Config
 import os
-from time import sleep
 import time 
 
 logging.basicConfig(level=logging.INFO)
+client_id = os.getenv('CLIENT_ID')
 
 CLIENT_ID = os.getenv("CLIENT_ID")
 
 def main():
-    sleep(90)
+    time.sleep(90)
     client = Client(name=CLIENT_ID)
     config = Config()
+
     try:
         client.connect(config.get_host(), config.get_port())
     except (ConnectionRefusedError, TimeoutError) as e:   

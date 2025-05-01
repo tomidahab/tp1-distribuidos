@@ -172,13 +172,13 @@ class RabbitMQClient:
             else:
                 queue = self._queues[queue_name]
             
-            # Get the consumer object from aio-pika
+            # Store the consumer tag, but use the queue's consume method
+            # which returns a consumer object in aio-pika
             consumer = await queue.consume(
                 callback=callback,
                 no_ack=no_ack
             )
             
-            # Store the consumer object in our tracking dictionary
             self._consumers[queue_name] = consumer
             
             logging.info(f"Consumer set up for queue '{queue_name}'")
@@ -194,31 +194,19 @@ class RabbitMQClient:
                 logging.warning(f"No active consumer found for queue '{queue_name}'")
                 return False
                 
-            consumer = self._consumers[queue_name]
+            consumer_tag = self._consumers[queue_name]
             
-            # In aio_pika, consumer objects have a cancel method
-            if hasattr(consumer, 'cancel'):
-                await consumer.cancel()
-            elif isinstance(consumer, str):
-                # Handle case where consumer might be stored as a tag string
-                if queue_name in self._queues:
-                    queue = self._queues[queue_name]
-                    try:
-                        await queue.cancel(consumer)
-                    except Exception as e:
-                        logging.warning(f"Failed to cancel consumer using queue.cancel: {e}")
-            else:
-                # If consumer is neither an object with cancel method nor a string
-                logging.warning(f"Consumer for '{queue_name}' has unexpected type: {type(consumer)}")
-            
-            # Remove from tracking dict regardless of cancellation success
+            # In aio_pika, we need to get the queue and cancel the consumer by tag
+            if queue_name in self._queues:
+                queue = self._queues[queue_name]
+                await queue.cancel(consumer_tag)
+                
             del self._consumers[queue_name]
             logging.info(f"Consumer for queue '{queue_name}' cancelled")
             return True
         except Exception as e:
             logging.error(f"Failed to cancel consumer for queue '{queue_name}': {e}")
-            # Don't let the failure crash the application
-            return False
+            raise e
         
     async def publish_to_queue(self, queue_name: str, message: str, persistent=True) -> bool:
         """Publish message directly to queue using the default exchange"""

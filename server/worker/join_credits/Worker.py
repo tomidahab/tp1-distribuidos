@@ -25,13 +25,15 @@ SIGTERM = os.getenv("SIGTERM", "SIGTERM")
 ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_data_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
+NUMBER_OF_CLIENTS = int(os.getenv("NUMBER_OF_CLIENTS"))
 
 class Worker:
     def __init__(self, 
                  consumer_queue_names=[MOVIES_ROUTER_CONSUME_QUEUE, CREDITS_ROUTER_CONSUME_QUEUE], 
                  exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
                  exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
-                 producer_queue_name=ROUTER_PRODUCER_QUEUE):
+                 producer_queue_name=ROUTER_PRODUCER_QUEUE,
+                 number_of_clients=NUMBER_OF_CLIENTS):
 
         self._running = True
         self.consumer_queue_names = consumer_queue_names
@@ -47,6 +49,9 @@ class Worker:
         
         # Data store for processing
         self.collected_data = {}
+        
+        self.number_of_clients_processed = 0
+        self.number_of_clients = number_of_clients
 
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -127,19 +132,17 @@ class Worker:
         if queue_name not in self.consumers:
             logging.info(f"Starting to consume from queue: {queue_name}")
             
-            # The consume method returns a consumer tag, store it
-            consumer_tag = await self.rabbitmq.consume(
+            success = await self.rabbitmq.consume(
                 queue_name=queue_name,
                 callback=self._process_message,
                 no_ack=False
             )
 
-            if not consumer_tag:
+            if not success:
                 logging.error(f"Failed to set up consumer for queue '{queue_name}'")
                 return False
                 
-            # Store the actual consumer tag returned by consume method
-            self.consumers[queue_name] = consumer_tag
+            self.consumers[queue_name] = True
             
             # Remove from paused queues if it was there
             if queue_name in self.paused_queues:
@@ -158,13 +161,10 @@ class Worker:
             self.paused_queues.add(current_queue)
             
             # Cancel the consumer for the current queue to stop consuming
+            await self.rabbitmq.cancel_consumer(current_queue)
+            
             if current_queue in self.consumers:
-                try:
-                    success = await self.rabbitmq.cancel_consumer(current_queue)
-                    if not success:
-                        logging.warning(f"Failed to cancel consumer for {current_queue}")
-                except Exception as e:
-                    logging.warning(f"Exception cancelling consumer for {current_queue}: {e}")
+                del self.consumers[current_queue]
             
             # Update index to next queue with wrap-around
             self.current_queue_index = (self.current_queue_index + 1) % len(self.consumer_queue_names)
@@ -172,15 +172,11 @@ class Worker:
             
             logging.info(f"Switching to queue: {next_queue}")
             
-            # Clear the consumers dictionary for this queue if needed
-            if current_queue in self.consumers:
-                del self.consumers[current_queue]
-            
             # Start consuming from the next queue
             await self._start_consuming_from_current_queue()
         except Exception as e:
             logging.error(f"Error switching to next queue: {e}")
-            # Don't raise the exception to avoid worker failure
+            raise e
     
     async def _process_message(self, message):
         """Process a message from the queue"""
@@ -200,7 +196,18 @@ class Worker:
                     del self.collected_data[client_id]
 
                 await message.ack()
-                await self._switch_to_next_queue()  # Switch to next queue
+                # Check if all clients have been processed
+                self.number_of_clients_processed += 1
+                if self.number_of_clients_processed >= self.number_of_clients:
+                    logging.info(f"\033[92mAll clients processed, switching to next queue\033[0m")
+                    try:
+                        # TODO: Handle this properly
+                        await self._switch_to_next_queue()  # Switch to next queue
+                    except Exception as e:
+                        logging.info(f"\033[91mError switching to next queue: {e}\033[0m")
+                        await self._switch_to_next_queue()  # Switch to next queue
+                        
+                    self.number_of_clients_processed = 0
                 return
             
             if sigterm:
@@ -217,7 +224,6 @@ class Worker:
                 del self.collected_data[client_id]
 
                 await message.ack()
-                return
             
             if data:
                 # If this is the first queue, store data for later join
