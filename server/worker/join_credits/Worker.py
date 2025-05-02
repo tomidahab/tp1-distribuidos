@@ -222,11 +222,8 @@ class Worker:
                         persistent=True
                     )
                 if client_id in self.collected_data:
-                    del self.collected_data[client_id]
-
-                await message.ack()
-            
-            if data:
+                    del self.collected_data[client_id]            
+            elif data:
                 # If this is the first queue, store data for later join
                 if self.current_queue_index == 0:
                     # Save data indexed by client_id (assuming it can process multiple clients)

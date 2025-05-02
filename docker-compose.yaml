@@ -1,25 +1,36 @@
 services:
-  client_1:
+  client1:
     env_file:
       - ./client/.env
     build: ./client
+    environment:
+      - CLIENT_ID=1
     depends_on:
       - boundary
     volumes:
       - ./client:/app
-    environment:
-      - CLIENT_ID=client_1
 
-  client_2:
+  client2:
     env_file:
       - ./client/.env
     build: ./client
+    environment:
+      - CLIENT_ID=2
     depends_on:
       - boundary
     volumes:
       - ./client:/app
+
+  client3:
+    env_file:
+      - ./client/.env
+    build: ./client
     environment:
-      - CLIENT_ID=client_2
+      - CLIENT_ID=3
+    depends_on:
+      - boundary
+    volumes:
+      - ./client:/app
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -35,6 +46,7 @@ services:
       - ./server/boundary/.env
     environment:
       - MOVIES_ROUTER_QUEUE=boundary_movies_router
+      - MOVIES_ROUTER_Q5_QUEUE=boundary_movies_Q5_router
       - CREDITS_ROUTER_QUEUE=boundary_credits_router
       - RATINGS_ROUTER_QUEUE=boundary_ratings_router
     depends_on:
@@ -45,8 +57,6 @@ services:
       - ./server/boundary:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
-
-
 
 # ---------------- START OF BOUNDARY ROUTERS ----------------
 
@@ -79,16 +89,15 @@ services:
       - INPUT_QUEUE=boundary_credits_router
       - OUTPUT_QUEUES=join_credits_worker_1_credits
       - BALANCER_TYPE=round_robin
+      - NUMBER_OF_CLIENTS=3
     depends_on:
       - rabbitmq
     volumes:
       - ./server/router:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
-      
-
+    
 # ---------------- END OF BOUNDARY ROUTERS ----------------
-
     
   join_credits_worker_1:
     build:
@@ -100,6 +109,7 @@ services:
       - ROUTER_CONSUME_QUEUE_MOVIES=join_credits_worker_1_movies
       - ROUTER_CONSUME_QUEUE_CREDITS=join_credits_worker_1_credits
       - ROUTER_PRODUCER_QUEUE=count_router
+      - NUMBER_OF_CLIENTS=3
     depends_on:
       - rabbitmq
     volumes:
@@ -391,8 +401,8 @@ services:
     environment:
       - NUMBER_OF_PRODUCER_WORKERS=2
       - INPUT_QUEUE=join_movies_router
-      - OUTPUT_QUEUES=join_ratings_worker_1_movies,join_credits_worker_1_movies
-      - EXCHANGE_TYPE=fanout # ----------- OUR ONLY FANOUT ROUTER -----------
+      - OUTPUT_QUEUES=join_ratings_worker_1_movies,join_ratings_worker_2_movies,join_credits_worker_1_movies,join_credits_worker_2_movies
+      - EXCHANGE_TYPE=fanout
       - EXCHANGE_NAME=join_router_exchange
     depends_on:
       - rabbitmq
@@ -572,14 +582,32 @@ services:
 # ===================================================================================
 # ------------------------------------ Q5 -------------------------------------------
 # ===================================================================================
-  # sentiment_analysis_worker:
+  # movies_q5_router:
+  #   build:
+  #     context: ./server
+  #     dockerfile: router/Dockerfile
+  #   env_file:
+  #     - ./server/router/.env
+  #   environment:
+  #     - NUMBER_OF_PRODUCER_WORKERS=1
+  #     - INPUT_QUEUE=boundary_movies_Q5_router
+  #     - OUTPUT_QUEUES=sentiment_analysis_worker_1,sentiment_analysis_worker_2
+  #     - BALANCER_TYPE=round_robin
+  #   depends_on:
+  #     - rabbitmq
+  #   volumes:
+  #     - ./server/router:/app
+  #     - ./server/rabbitmq:/app/rabbitmq
+  #     - ./server/common:/app/common
+
+  # sentiment_analysis_worker_1:
   #   build:
   #     context: ./server
   #     dockerfile: worker/sentiment_analysis/Dockerfile
   #   env_file:
   #     - ./server/worker/sentiment_analysis/.env
   #   environment:
-  #     - ROUTER_CONSUME_QUEUE=sentiment_analysis_worker
+  #     - ROUTER_CONSUME_QUEUE=sentiment_analysis_worker_1
   #     - ROUTER_PRODUCER_QUEUE=average_sentiment_router
   #   depends_on:
   #     - rabbitmq
@@ -590,7 +618,27 @@ services:
   #   deploy:
   #     resources:
   #       limits:
-  #         memory: 4G
+  #         memory: 2G
+
+  # sentiment_analysis_worker_2:
+  #   build:
+  #     context: ./server
+  #     dockerfile: worker/sentiment_analysis/Dockerfile
+  #   env_file:
+  #     - ./server/worker/sentiment_analysis/.env
+  #   environment:
+  #     - ROUTER_CONSUME_QUEUE=sentiment_analysis_worker_2
+  #     - ROUTER_PRODUCER_QUEUE=average_sentiment_router
+  #   depends_on:
+  #     - rabbitmq
+  #   volumes:
+  #     - ./server/worker/sentiment_analysis:/app
+  #     - ./server/rabbitmq:/app/rabbitmq
+  #     - ./server/common:/app/common
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 2G
 
   # average_sentiment_router:
   #   build:
@@ -599,17 +647,16 @@ services:
   #   env_file:
   #     - ./server/router/.env
   #   environment:
-  #     - NUMBER_OF_PRODUCER_WORKERS=1
+  #     - NUMBER_OF_PRODUCER_WORKERS=2
   #     - INPUT_QUEUE=average_sentiment_router
-  #     - OUTPUT_QUEUES=average_sentiment_worker_1
-  #     - BALANCER_TYPE=round_robin
+  #     - OUTPUT_QUEUES=[["average_sentiment_worker_1"],["average_sentiment_worker_2"]]
+  #     - BALANCER_TYPE=shard_by_ascii
   #   depends_on:
   #     - rabbitmq
   #   volumes:
   #     - ./server/router:/app
   #     - ./server/rabbitmq:/app/rabbitmq
   #     - ./server/common:/app/common
-
   # average_sentiment_worker_1:
   #   build:
   #     context: ./server
@@ -618,9 +665,58 @@ services:
   #     - ./server/worker/average_sentiment/.env
   #   environment:
   #     - ROUTER_CONSUME_QUEUE=average_sentiment_worker_1
+  #     - ROUTER_PRODUCER_QUEUE=average_sentiment_collector_router
   #   depends_on:
   #     - rabbitmq
   #   volumes:
   #     - ./server/worker/average_sentiment:/app
+  #     - ./server/rabbitmq:/app/rabbitmq
+  #     - ./server/common:/app/common
+  # average_sentiment_worker_2:
+  #   build:
+  #     context: ./server
+  #     dockerfile: worker/average_sentiment/Dockerfile
+  #   env_file:
+  #     - ./server/worker/average_sentiment/.env
+  #   environment:
+  #     - ROUTER_CONSUME_QUEUE=average_sentiment_worker_2
+  #     - ROUTER_PRODUCER_QUEUE=average_sentiment_collector_router
+  #   depends_on:
+  #     - rabbitmq
+  #   volumes:
+  #     - ./server/worker/average_sentiment:/app
+  #     - ./server/rabbitmq:/app/rabbitmq
+  #     - ./server/common:/app/common
+  # average_sentiment_collector_router:
+  #   build:
+  #     context: ./server
+  #     dockerfile: router/Dockerfile
+  #   env_file:
+  #     - ./server/router/.env
+  #   environment:
+  #     - NUMBER_OF_PRODUCER_WORKERS=2
+  #     - INPUT_QUEUE=average_sentiment_collector_router
+  #     - OUTPUT_QUEUES=collector_average_sentiment_worker
+  #     - BALANCER_TYPE=round_robin
+  #   depends_on:
+  #     - rabbitmq
+  #   volumes:
+  #     - ./server/router:/app
+  #     - ./server/rabbitmq:/app/rabbitmq
+  #     - ./server/common:/app/common
+
+  # collector_average_sentiment_worker:
+  #   build:
+  #     context: ./server
+  #     dockerfile: worker/collector_average_sentiment_worker/Dockerfile
+  #   env_file:
+  #     - ./server/worker/collector_average_sentiment_worker/.env
+  #   environment:
+  #     - ROUTER_CONSUME_QUEUE=collector_average_sentiment_worker
+  #     - RESPONSE_QUEUE=response_queue
+  #   depends_on:
+  #     - rabbitmq
+  #   volumes:
+  #     - ./server/worker/collector_average_sentiment_worker:/app
   #     - ./server/rabbitmq:/app/rabbitmq
   #     - ./server/common:/app/common

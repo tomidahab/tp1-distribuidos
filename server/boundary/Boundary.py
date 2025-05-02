@@ -17,6 +17,7 @@ load_dotenv()
 
 # Router queue names from environment variables
 MOVIES_ROUTER_QUEUE = os.getenv("MOVIES_ROUTER_QUEUE")
+MOVIES_ROUTER_Q5_QUEUE = os.getenv("MOVIES_ROUTER_Q5_QUEUE")
 CREDITS_ROUTER_QUEUE = os.getenv("CREDITS_ROUTER_QUEUE")
 RATINGS_ROUTER_QUEUE = os.getenv("RATINGS_ROUTER_QUEUE")
 BUDGET_WORKERS_QUEUE = os.getenv("COUNTRIES_BUDGET_QUEUE","countries_budget_workers")
@@ -44,7 +45,9 @@ logging.basicConfig(
 )
 
 class Boundary:
-  def __init__(self, port=5000, listen_backlog=100, movies_router_queue=MOVIES_ROUTER_QUEUE, credits_router_queue=CREDITS_ROUTER_QUEUE, ratings_router_queue=RATINGS_ROUTER_QUEUE):
+  def __init__(self, port=5000, listen_backlog=100, movies_router_queue=MOVIES_ROUTER_QUEUE, 
+               credits_router_queue=CREDITS_ROUTER_QUEUE, ratings_router_queue=RATINGS_ROUTER_QUEUE,
+               movies_router_q5_queue=MOVIES_ROUTER_Q5_QUEUE):
     self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     self._server_socket.bind(("", port))
     self._server_socket.listen(listen_backlog)
@@ -59,6 +62,7 @@ class Boundary:
     
     # Router queues for different CSV types
     self.movies_router_queue = movies_router_queue
+    self.movies_router_q5_queue = movies_router_q5_queue
     self.credits_router_queue = credits_router_queue
     self.ratings_router_queue = ratings_router_queue
 
@@ -66,7 +70,7 @@ class Boundary:
     signal.signal(signal.SIGTERM, self._handle_shutdown)
 
     logging.info(self.green(f"Boundary ID: {self.id} successfully created"))
-    logging.info(f"Using router queues: Movies={self.movies_router_queue}, Credits={self.credits_router_queue}, Ratings={self.ratings_router_queue}")
+    logging.info(f"Using router queues: Movies={self.movies_router_queue}, Movies Q5={self.movies_router_q5_queue}, Credits={self.credits_router_queue}, Ratings={self.ratings_router_queue}")
 
   # TODO: Move to printer class
   def green(self, text): return f"\033[92m{text}\033[0m"
@@ -212,9 +216,7 @@ class Boundary:
                     
                     # Send data for Q5 to the reviews router
                     prepared_data_q5 = self._addMetaData(client_id, filtered_data_q5)
-                    #TODO change it so instead of sending to the sentiment analysis worker, it sends to the movies router
-                    # and the router sends it to the respective worker based on the query in the metadata
-                    await self._send_data_to_rabbitmq_queue(prepared_data_q5, "sentiment_analysis_worker")
+                    await self._send_data_to_rabbitmq_queue(prepared_data_q5, self.movies_router_q5_queue)
                 
                 elif csvs_received == CREDITS_CSV:
                     filtered_data = self._project_to_columns(data, COLUMNS_Q4)
@@ -240,11 +242,9 @@ class Boundary:
         prepared_data = self._addMetaData(client_id, None, isEOF, not isEOF)
         if csvs_received == MOVIES_CSV:
            await self._send_data_to_rabbitmq_queue(prepared_data, self.movies_router_queue)
-           #TODO: change it so instead of sending to the sentiment analysis worker, it sends to the movies router
-           # and the router sends it to the respective worker based on the query in the metadata
            for i in range(0,COUNTRIES_BUDGET_WORKERS):
                 await self._send_data_to_rabbitmq_queue(prepared_data, BUDGET_WORKERS_QUEUE)
-           await self._send_data_to_rabbitmq_queue(prepared_data, "sentiment_analysis_worker")
+           await self._send_data_to_rabbitmq_queue(prepared_data, self.movies_router_q5_queue)
         elif csvs_received == CREDITS_CSV:
             await self._send_data_to_rabbitmq_queue(prepared_data, self.credits_router_queue)
         elif csvs_received == RATINGS_CSV:
@@ -412,6 +412,7 @@ class Boundary:
     
     # Declare all necessary queues
     await self.rabbitmq.declare_queue(self.movies_router_queue, durable=True)
+    await self.rabbitmq.declare_queue(self.movies_router_q5_queue, durable=True)
     await self.rabbitmq.declare_queue(self.credits_router_queue, durable=True)
     await self.rabbitmq.declare_queue(self.ratings_router_queue, durable=True)
     await self.rabbitmq.declare_queue(RESPONSE_QUEUE, durable=True)
