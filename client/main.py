@@ -1,16 +1,24 @@
 from Client import Client
 import logging
 from Config import Config
-import time
 import os
+import time 
+import signal
 
 logging.basicConfig(level=logging.INFO)
 client_id = os.getenv('CLIENT_ID')
 
+CLIENT_ID = os.getenv("CLIENT_ID")
+
+
 def main():
-    client = Client(name=client_id)
+    time.sleep(90)
+    global client
+    client = Client(name=CLIENT_ID)
     config = Config()
 
+    signal.signal(signal.SIGINT, client._handle_sigterm)
+    signal.signal(signal.SIGTERM, client._handle_sigterm)
     try:
         client.connect(config.get_host(), config.get_port())
     except (ConnectionRefusedError, TimeoutError) as e:   
@@ -30,7 +38,7 @@ def main():
         
         # Start sender thread and get the thread object
         sender_thread = client.start_sender_thread(files_to_send)
-        
+
         # Wait for sender to finish
         sender_thread.join()
         logging.info("Sender completed. Receiver still active. Press Ctrl+C to exit.")

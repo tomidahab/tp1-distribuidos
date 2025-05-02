@@ -130,6 +130,7 @@ class RouterWorker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER")
+            sigterm = deserialized_message.get("SIGTERM")
             query = deserialized_message.get("query")
             
 
@@ -145,16 +146,23 @@ class RouterWorker:
                 
                 # Once we've received all expected EOF markers, send to all output queues
                 if self.end_of_file_received[client_id] >= self.number_of_producer_workers:
-                    await self._send_eof_to_all_queues(client_id, data, query)
+                    await self._send_marker_to_all_queues(client_id, data, query, True)
                     self.end_of_file_received[client_id] = 0
                 await message.ack()
                 return
+            
+            if sigterm:
+                logging.info(f"received sigterm {client_id}")
+                await self._send_marker_to_all_queues(client_id, data, query,False)
+                return
+
                 
             # Prepare message to publish - maintain the query field if present
             outgoing_message = {
                 "client_id": client_id,
                 "data": data,
-                "EOF_MARKER": eof_marker
+                "EOF_MARKER": eof_marker,
+                "SIGTERM": sigterm
             }
             if query:
                 outgoing_message["query"] = query
@@ -245,17 +253,22 @@ class RouterWorker:
         if hasattr(self, 'rabbit_client'):
             asyncio.create_task(self.rabbit_client.close())
 
-    async def _send_eof_to_all_queues(self, client_id, data, query=None):
-        """Send EOF marker to all output queues for a specific client ID"""
-        eof_message = {
+    async def _send_marker_to_all_queues(self, client_id, data, query=None, isEOF=True):
+        """Send EOF/SIGTERM marker to all output queues for a specific client ID"""
+        if isEOF:
+            string = "EOF"
+        else:
+            string = "SIGTERM"
+        message = {
             "client_id": client_id,
             "data": data,
-            "EOF_MARKER": True
+            "EOF_MARKER": isEOF,
+            "SIGTERM": not isEOF
         }
         
         # Include query field if present
         if query:
-            eof_message["query"] = query
+            message["query"] = query
         
         # For fanout exchanges, we only need to publish once with any routing key
         if self.exchange_type == "fanout":
@@ -263,7 +276,7 @@ class RouterWorker:
             success = await self.rabbit_client.publish(
                 exchange_name=self.exchange_name,
                 routing_key="",  # Routing key is ignored for fanout exchanges
-                message=Serializer.serialize(eof_message),
+                message=Serializer.serialize(message),
                 persistent=True
             )
             if not success:
@@ -278,10 +291,11 @@ class RouterWorker:
             success = await self.rabbit_client.publish(
                 exchange_name=self.exchange_name,
                 routing_key=queue,
-                message=Serializer.serialize(eof_message),
+                message=Serializer.serialize(message),
                 persistent=True
             )
             if not success:
-                logging.error(f"Failed to send EOF marker to queue {queue} for client {client_id}")
+                logging.error(f"Failed to send {string} marker to queue {queue} for client {client_id}")
         
-        logging.info(f"EOF markers sent to all {len(all_queues)} output queues for client {client_id}")
+
+        logging.info(f"{string} markers sent to all {len(all_queues)} output queues for client {client_id}")

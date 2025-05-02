@@ -142,9 +142,22 @@ class Worker:
             data = deserialized_message.get("data")
             query = deserialized_message.get("query")
             eof_marker = deserialized_message.get("EOF_MARKER")
+            sigterm = deserialized_message.get("SIGTERM")
             if eof_marker:
                 logging.info(f"\033[95mReceived EOF marker for client_id '{client_id}'\033[0m")
                 await self.send_eq_one_country(client_id, data, self.producer_queue_names[0], True)
+                await message.ack()
+                return
+            
+            if sigterm:
+                logging.info(f"\033[95mReceived SIGTERM marker for client_id '{client_id}'\033[0m")
+                message_to_send = self._add_metadata(client_id, data, False, True)
+                await self.rabbitmq.publish(
+                    exchange_name=self.exchange_name_producer,
+                    routing_key=self.producer_queue_names[0],
+                    message=Serializer.serialize(message_to_send),
+                    persistent=True
+                )
                 await message.ack()
                 return
             
@@ -217,11 +230,12 @@ class Worker:
         if not success:
             logging.error(f"Failed to send data to response queue")
 
-    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+    def _add_metadata(self, client_id, data, eof_marker=False, sigterm = False, query=None):
         """Add metadata to the message"""
         message = {        
             "client_id": client_id,
             "EOF_MARKER": eof_marker,
+            "SIGTERM":sigterm,
             "data": data,
             "query": query,
         }

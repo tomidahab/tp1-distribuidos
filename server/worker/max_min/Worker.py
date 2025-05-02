@@ -131,6 +131,7 @@ class Worker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER", False)
+            sigterm = deserialized_message.get("SIGTERM", False)
             
             if eof_marker:
                 # If we have data for this client, send it to router producer queue
@@ -143,6 +144,15 @@ class Worker:
                     logging.info(f"\033[92mSent max/min ratings for client {client_id} and cleaned up\033[0m")
                 else:
                     logging.warning(f"Received EOF for client {client_id} but no data found")
+            if sigterm:
+                logging.info(f"\033[93mReceived SIGTERM marker for client_id '{client_id}'\033[0m")
+                message_to_send = self._add_metadata(client_id, data, False, True)
+                await self.rabbitmq.publish(
+                    exchange_name=self.exchange_name_producer,
+                    routing_key=self.producer_queue_name[0],
+                    message=Serializer.serialize(message_to_send),
+                    persistent=True
+                )
             elif data:
                 self._update_movie_data(client_id, data)
             else:
@@ -247,7 +257,7 @@ class Worker:
         if queue_name is None:
             queue_name = self.producer_queue_name[0]
             
-        message = self._add_metadata(client_id, data, eof_marker, query)
+        message = self._add_metadata(client_id, data, eof_marker, False, query)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
             routing_key=queue_name,
@@ -258,16 +268,17 @@ class Worker:
         if not success:
             logging.error(f"Failed to send data to {queue_name} for client {client_id}")
 
-    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
-        """Prepare the message to be sent to the output queue"""
+    def _add_metadata(self, client_id, data, eof_marker=False, sigterm = False, query=None):
+        """Add metadata to the message"""
         message = {        
             "client_id": client_id,
-            "data": data,
             "EOF_MARKER": eof_marker,
+            "SIGTERM":sigterm,
+            "data": data,
             "query": query,
         }
         return message
-        
+    
     def _handle_shutdown(self, *_):
         """Handle shutdown signals"""
         logging.info(f"Shutting down worker...")

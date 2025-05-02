@@ -92,6 +92,7 @@ class Worker:
             client_id = deserialized_message.get("clientId", deserialized_message.get("client_id"))
             data = deserialized_message.get("data", [])
             eof_marker = deserialized_message.get("EOF_MARKER", False)
+            sigterm = deserialized_message.get("SIGTERM", False)
             
             if eof_marker:
                 logging.info(f"Received EOF marker for client_id '{client_id}'")
@@ -122,6 +123,18 @@ class Worker:
                     logging.info(f"Sent sentiment data for client {client_id} and cleaned up client data")
                 else:
                     logging.warning(f"Received EOF for client {client_id} but no data found")
+                
+                await message.ack()
+                return
+            
+            if sigterm: #TODO check if this is enough
+                response_message = self._add_metadata(client_id, result, False, True, QUERY_5)
+
+                await self.rabbitmq.publish_to_queue(
+                    queue_name=self.response_queue_name,
+                    message=Serializer.serialize(response_message),
+                    persistent=True
+                )
                 
                 await message.ack()
                 return
@@ -178,13 +191,14 @@ class Worker:
         if not success:
             logging.error(f"Failed to send data with query '{query}' for client {client_id}")
     
-    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+    def _add_metadata(self, client_id, data, eof_marker=False, sigterm=False, query=None):
         """Prepare the message to be sent to the output queue - standardized across workers"""
         message = {        
             "client_id": client_id,
             "data": data,
             "EOF_MARKER": eof_marker,
             "query": query,
+            "SIGTERM": sigterm
         }
         return message
     

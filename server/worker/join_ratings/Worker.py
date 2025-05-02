@@ -19,13 +19,14 @@ load_dotenv()
 MOVIES_ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE_MOVIES")
 RATINGS_ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE_RATINGS")
 EOF_MARKER = os.getenv("EOF_MARKER", "EOF_MARKER")
+SIGTERM = os.getenv("SIGTERM", "SIGTERM")
 
 # Router configuration
 ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_data_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
 
-NUMBER_OF_CLIENTS = int(os.getenv("NUMBER_OF_CLIENTS"))
+NUMBER_OF_CLIENTS = int(os.getenv("NUMBER_OF_CLIENTS",2))
 
 class Worker:
     def __init__(self, 
@@ -186,13 +187,15 @@ class Worker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER")
+            sigterm = deserialized_message.get("SIGTERM")
             # Check if this is an EOF marker message
             if eof_marker:
                 logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}' for current_queue_index {self.current_queue_index}\033[0m")
                 if self.current_queue_index == 1  and client_id in self.collected_data:
                     logging.info(f"\033[92mJoined data for client {client_id} with EOF marker\033[0m")
                     await self.send_data(client_id, data, True)
-                    del self.collected_data[client_id]
+                    if client_id in self.collected_data:
+                        del self.collected_data[client_id]
                 
                 await message.ack()
                 # Check if all clients have been processed
@@ -209,7 +212,19 @@ class Worker:
                     self.number_of_clients_processed = 0
                 return
             
-            if data:
+            if sigterm:
+                logging.info(f"\033[93mReceived SIGTERM marker for client_id '{client_id}'\033[0m")
+                for queue in self.consumer_queue_names:
+                    message_to_send = self._add_metadata(client_id, data, False, True)
+                    await self.rabbitmq.publish(
+                        exchange_name=self.exchange_name_producer,
+                        routing_key=queue,
+                        message=Serializer.serialize(message_to_send),
+                        persistent=True
+                    )
+                if client_id in self.collected_data:
+                    del self.collected_data[client_id]
+            elif data:
                 # If this is the first queue, store data for later join
                 if self.current_queue_index == 0:
                     # Save data indexed by client_id (assuming it can process multiple clients)
@@ -300,12 +315,13 @@ class Worker:
             logging.error(f"Error sending data to output queue: {e}")
             raise e
 
-    def _add_metadata(self, client_id, data, eof_marker, query=None):
-        """Prepare the message to be sent to the output queue"""
+    def _add_metadata(self, client_id, data, eof_marker=False, sigterm = False, query=None):
+        """Add metadata to the message"""
         message = {        
             "client_id": client_id,
-            "data": data,
             "EOF_MARKER": eof_marker,
+            "SIGTERM":sigterm,
+            "data": data,
             "query": query,
         }
         return message

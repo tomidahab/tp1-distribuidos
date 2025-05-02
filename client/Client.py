@@ -12,6 +12,7 @@ logging.basicConfig(level=logging.INFO)
 
 # Constants
 QUERY_1 = os.getenv("QUERY_1", "1")
+QUERY_2 = os.getenv("QUERY_2", "2")
 QUERY_3 = os.getenv("QUERY_3", "3")
 QUERY_4 = os.getenv("QUERY_4", "4")
 QUERY_5 = os.getenv("QUERY_5", "5")
@@ -25,6 +26,7 @@ class Client:
         self.receiver_running = False
         self.receiver_thread = None
         self.output_file_q1 = f"output/output_records_client_{self.name}_Q1.json"
+        self.output_file_q2 = f"output/output_records_client_{self.name}_Q2.json"
         self.output_file_q3 = f"output/output_records_client_{self.name}_Q3.json"
         self.output_file_q4 = f"output/output_records_client_{self.name}_Q4.json"
         self.output_file_q5 = f"output/output_records_client_{self.name}_Q5.json"
@@ -144,6 +146,8 @@ class Client:
                         if query == QUERY_1:
                             parsed_data = self._format_data_query_1(parsed_data)
                             self._write_to_file(self.output_file_q1, parsed_data)
+                        if query == QUERY_2:
+                            self._write_to_file(self.output_file_q2, parsed_data)
                         elif query == QUERY_3:
                             #parse data if needed
                             # parsed_data = self._format_data_query_3(parsed_data) 
@@ -220,3 +224,18 @@ class Client:
             }
             formatted_data.append(formatted_movie)
         return formatted_data
+
+    def _handle_sigterm(self, signum, frame):
+        """
+        Handle SIGTERM signal gracefully.
+        """
+        logging.info("Received SIGTERM, sending shutdown signal to server...")
+        if self.skt:
+            try:
+                self.protocol.send_all(self.skt, self.config.SIGTERM)
+                logging.info("SIGTERM message sent to server")
+            except Exception as e:
+                logging.error(f"Error sending SIGTERM message: {e}")
+
+        self.shutdown()
+        logging.info("Client shutdown successfully after SIGTERM")

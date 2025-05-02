@@ -182,7 +182,7 @@ class RabbitMQClient:
             self._consumers[queue_name] = consumer
             
             logging.info(f"Consumer set up for queue '{queue_name}'")
-            return True
+            return consumer  # Return the consumer object to the worker
         except Exception as e:
             logging.error(f"Failed to set up consumer for queue '{queue_name}': {e}")
             return False

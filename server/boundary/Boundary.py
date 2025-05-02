@@ -20,14 +20,20 @@ MOVIES_ROUTER_QUEUE = os.getenv("MOVIES_ROUTER_QUEUE")
 MOVIES_ROUTER_Q5_QUEUE = os.getenv("MOVIES_ROUTER_Q5_QUEUE")
 CREDITS_ROUTER_QUEUE = os.getenv("CREDITS_ROUTER_QUEUE")
 RATINGS_ROUTER_QUEUE = os.getenv("RATINGS_ROUTER_QUEUE")
+BUDGET_WORKERS_QUEUE = os.getenv("COUNTRIES_BUDGET_QUEUE","countries_budget_workers")
 
 COLUMNS_Q1 = {'genres': 3, 'id':5, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
+COLUMNS_Q2 = {'budget':2,'genres': 3, 'imdb_id':6, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
 COLUMNS_Q3 = {'id': 1, 'rating': 2}
 COLUMNS_Q4 = {"cast": 0, "movie_id": 2}
 COLUMNS_Q5 = {'budget': 2, 'imdb_id':6, 'original_title': 8, 'overview': 9, 'revenue': 15}
 EOF_MARKER = "EOF_MARKER"
+SIGTERM = "SIGTERM"
+
+COUNTRIES_BUDGET_WORKERS = os.getenv("COUNTRIES_BUDGET_WORKERS",2)
 
 RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
+MAX_CSVS = 3
 MOVIES_CSV = 0
 CREDITS_CSV = 1
 RATINGS_CSV = 2
@@ -184,22 +190,29 @@ class Boundary:
     csvs_received = 0
     try:
         data = ''
-        #TODO: chagne this to while skt connetion is open, or proto is connected.
-        while True:
+        while csvs_received < MAX_CSVS:
             try:
                 data = await self._receive_csv_batch(sock, proto)
                 if data == EOF_MARKER:
-                    await self._send_eof_marker(csvs_received, client_id)
+                    await self._send_marker(csvs_received, client_id, True)
                     csvs_received += 1
                     logging.info(self.green(f"EOF received for CSV #{csvs_received} from client {addr[0]}:{addr[1]}"))
                     continue
+                elif data == SIGTERM:
+                    await self._send_marker(csvs_received, client_id, False)
+                    logging.info(self.green(f"SIGTERM received from client {addr[0]}:{addr[1]}"))
+                    sock.close()
+                    return
 
                 if csvs_received == MOVIES_CSV:
-                    filtered_data_q1, filtered_data_q5 = self._project_to_columns(data, [COLUMNS_Q1, COLUMNS_Q5])
+                    filtered_data_q1, filtered_data_q2, filtered_data_q5 = self._project_to_columns(data, [COLUMNS_Q1, COLUMNS_Q2, COLUMNS_Q5])
                     
                     # Send data for Q1 to the movies router
                     prepared_data_q1 = self._addMetaData(client_id, filtered_data_q1)
                     await self._send_data_to_rabbitmq_queue(prepared_data_q1, self.movies_router_queue)
+
+                    prepared_data_q2 = self._addMetaData(client_id, filtered_data_q2)
+                    await self._send_data_to_rabbitmq_queue(prepared_data_q2, BUDGET_WORKERS_QUEUE)
                     
                     # Send data for Q5 to the reviews router
                     prepared_data_q5 = self._addMetaData(client_id, filtered_data_q5)
@@ -225,10 +238,12 @@ class Boundary:
         logging.error(f"Client {addr[0]}:{addr[1]} error: {exc}")
         logging.exception(exc)
 
-  async def _send_eof_marker(self, csvs_received, client_id):
-        prepared_data = self._addMetaData(client_id, None, True)
+  async def _send_marker(self, csvs_received, client_id, isEOF): #isEOF for defining EOF or SIGTERM
+        prepared_data = self._addMetaData(client_id, None, isEOF, not isEOF)
         if csvs_received == MOVIES_CSV:
            await self._send_data_to_rabbitmq_queue(prepared_data, self.movies_router_queue)
+           for i in range(0,COUNTRIES_BUDGET_WORKERS):
+                await self._send_data_to_rabbitmq_queue(prepared_data, BUDGET_WORKERS_QUEUE)
            await self._send_data_to_rabbitmq_queue(prepared_data, self.movies_router_q5_queue)
         elif csvs_received == CREDITS_CSV:
             await self._send_data_to_rabbitmq_queue(prepared_data, self.credits_router_queue)
@@ -360,11 +375,12 @@ class Boundary:
         
         return result
   
-  def _addMetaData(self, client_id, data, is_eof_marker=False):
+  def _addMetaData(self, client_id, data, is_eof_marker=False, is_sigterm=False):
     message = {        
       "client_id": client_id,
       "data": data,
-      "EOF_MARKER": is_eof_marker
+      "EOF_MARKER": is_eof_marker,
+      "SIGTERM": is_sigterm
     }
     return message
   

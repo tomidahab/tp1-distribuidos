@@ -95,6 +95,7 @@ class SentimentWorker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER", False)
+            sigterm =deserialized_message.get("EOF_MARKER", False)
 
             logging.info(f"Received message from client_id '{client_id}'")
             
@@ -104,7 +105,8 @@ class SentimentWorker:
                 response_message = {
                     "client_id": client_id,
                     "data": [],
-                    "EOF_MARKER": True
+                    "EOF_MARKER": True,
+                    "SIGTERM": False
                 }
                 
                 await self.rabbitmq.publish_to_queue(
@@ -115,6 +117,27 @@ class SentimentWorker:
                 
                 await message.ack()
                 return
+            
+            if sigterm:
+                logging.info(f"\033[93mReceived SIGTERM marker for client_id '{client_id}'\033[0m")
+                # Pass through EOF marker to response queue
+                response_message = {
+                    "client_id": client_id,
+                    "query": "Q5",
+                    "data": [],
+                    "EOF_MARKER": False,
+                    "SIGTERM": True,
+                }
+                
+                await self.rabbitmq.publish_to_queue(
+                    queue_name=self.response_queue_name,
+                    message=Serializer.serialize(response_message),
+                    persistent=True
+                )
+                
+                await message.ack()
+                return
+
             
             # Process the movie data for sentiment analysis
             if data:

@@ -137,10 +137,23 @@ class Worker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER")
+            sigterm = deserialized_message.get("SIGTERM")
 
             if eof_marker:
                 logging.info(f"\033[95mReceived EOF marker for client_id '{client_id}'\033[0m")
                 await self.send_data(client_id, data, QUERY_GT_YEAR, True)
+                await message.ack()
+                return
+            
+            if sigterm:
+                logging.info(f"\033[95mReceived SIGTERM marker for client_id '{client_id}'\033[0m")
+                message_send = self._add_metadata(client_id, data, False, True)
+                await self.rabbitmq.publish(
+                    exchange_name=self.exchange_name_producer,
+                    routing_key=self.producer_queue_name,
+                    message=Serializer.serialize(message_send),
+                    persistent=True
+                )
                 await message.ack()
                 return
             
@@ -162,7 +175,7 @@ class Worker:
 
     async def send_data(self, client_id, data, query, eof_marker=False):
         """Send data to the router queue with query type in metadata"""
-        message = self._add_metadata(client_id, data, eof_marker, query)
+        message = self._add_metadata(client_id, data, eof_marker, False, query)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
             routing_key=self.producer_queue_name,
@@ -172,13 +185,14 @@ class Worker:
         if not success:
             logging.error(f"Failed to send data with query type '{query}' to router queue")
 
-    def _add_metadata(self, client_id, data, eof_marker, query):
-        """Add metadata including query type to the message"""
+    def _add_metadata(self, client_id, data, eof_marker=False, sigterm = False, query=None):
+        """Add metadata to the message"""
         message = {        
             "client_id": client_id,
+            "EOF_MARKER": eof_marker,
+            "SIGTERM":sigterm,
             "data": data,
             "query": query,
-            "EOF_MARKER": eof_marker,
         }
         return message
 
