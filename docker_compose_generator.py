@@ -30,13 +30,7 @@ def add_static_services(services, config):
     # RabbitMQ service
     services["rabbitmq"] = {
         "image": "rabbitmq:3-management",
-        "ports": ["5672:5672", "15672:15672"],
-        "healthcheck": {
-            "test": ["CMD", "rabbitmq-diagnostics", "-q", "ping"],
-            "interval": "5s",
-            "timeout": "3s",
-            "retries": 5
-        }
+        "ports": ["5672:5672", "15672:15672"]
     }
     
     # Boundary service
@@ -52,11 +46,7 @@ def add_static_services(services, config):
             "CREDITS_ROUTER_QUEUE=boundary_credits_router",
             "RATINGS_ROUTER_QUEUE=boundary_ratings_router"
         ],
-        "depends_on": {
-            "rabbitmq": {
-                "condition": "service_healthy"
-            }
-        },
+        "depends_on": ["rabbitmq"],
         "ports": ["5000:5000"],
         "volumes": [
             "./server/boundary:/app",
@@ -97,11 +87,7 @@ def add_worker_replicas(services, worker_type, replicas, config):
                 "ROUTER_CONSUME_QUEUE=filter_by_year_worker_{i}",
                 "ROUTER_PRODUCER_QUEUE=country_router"
             ],
-            "depends_on": {
-                "rabbitmq": {
-                    "condition": "service_healthy"
-                }
-            },
+            "depends_on": ["rabbitmq"],
             "volumes": [
                 "./server/worker/filter_by_year:/app",
                 "./server/rabbitmq:/app/rabbitmq",
@@ -373,11 +359,7 @@ def configure_routers(services, config):
                 f"OUTPUT_QUEUES={','.join([f'filter_by_year_worker_{i}' for i in range(1, year_filter_workers + 1)])}",
                 "BALANCER_TYPE=round_robin"
             ],
-            "depends_on": {
-                "rabbitmq": {
-                    "condition": "service_healthy"
-                }
-            },
+            "depends_on": ["rabbitmq"],
             "volumes": [
                 "./server/router:/app",
                 "./server/rabbitmq:/app/rabbitmq",
