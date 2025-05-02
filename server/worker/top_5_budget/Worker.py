@@ -136,8 +136,6 @@ class Worker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             sigterm = deserialized_message.get("SIGTERM")
-
-            logging.info(f"Data:{data}")
             
             # Process the movie data - preview first item
             if sigterm:
