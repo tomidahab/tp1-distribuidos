@@ -135,7 +135,7 @@ class Worker:
             # Extract clientId and data from the deserialized message
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
-            sigterm = deserialized_message.get("sigterm")
+            sigterm = deserialized_message.get("SIGTERM")
 
             logging.info(f"Data:{data}")
             
