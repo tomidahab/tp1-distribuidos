@@ -36,6 +36,7 @@ def main():
         
         time.sleep(1)
         client._handle_sigterm(None,None)
+        return
         # Wait for sender to finish
         sender_thread.join()
         logging.info("Sender completed. Receiver still active. Press Ctrl+C to exit.")
