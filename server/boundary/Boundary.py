@@ -9,6 +9,7 @@ from rabbitmq.Rabbitmq_client import RabbitMQClient
 import csv
 from io import StringIO
 from common.Serializer import Serializer
+from common.Printer import Printer
 import json
 from dotenv import load_dotenv
 
@@ -63,11 +64,8 @@ class Boundary:
     signal.signal(signal.SIGINT, self._handle_shutdown)
     signal.signal(signal.SIGTERM, self._handle_shutdown)
 
-    logging.info(self.green(f"Boundary ID: {self.id} successfully created"))
+    logging.info(Printer.green(f"Boundary ID: {self.id} successfully created"))
     logging.info(f"Using router queues: Movies={self.movies_router_queue}, Movies Q5={self.movies_router_q5_queue}, Credits={self.credits_router_queue}, Ratings={self.ratings_router_queue}")
-
-  # TODO: Move to printer class
-  def green(self, text): return f"\033[92m{text}\033[0m"
 
 # ------------------------------------------------------------------ #
 # main accept‑loop                                                   #
@@ -86,7 +84,7 @@ class Boundary:
       try:
         client_sock, addr = await loop.sock_accept(self._server_socket)
         client_id = str(uuid.uuid4())  # Convert UUID to string immediately
-        logging.info(self.green(f'client id {client_id}'))
+        logging.info(Printer.green(f'client id {client_id}'))
       except asyncio.CancelledError:
         break
       except Exception as exc:
@@ -107,7 +105,7 @@ class Boundary:
     This method blocks waiting for messages without consuming CPU.
     """
     try:
-        logging.info(self.green(f"Client_socket: {self._client_sockets}"))
+        logging.info(Printer.green(f"Client_socket: {self._client_sockets}"))
         
         # Set up consumer - this blocks waiting for messages
         await self.rabbitmq.consume(
@@ -116,7 +114,7 @@ class Boundary:
             no_ack=False
         )
         
-        logging.info(self.green(f"Started consuming from {RESPONSE_QUEUE}"))
+        logging.info(Printer.green(f"Started consuming from {RESPONSE_QUEUE}"))
         
         # Keep this task alive while the service is running
         while self._running:
@@ -184,7 +182,7 @@ class Boundary:
   async def _handle_client_connection(self, sock, addr, client_id):
     loop = asyncio.get_running_loop()
     proto = self.protocol(loop)
-    logging.info(self.green(f"Client ID: {client_id} successfully started"))
+    logging.info(Printer.green(f"Client ID: {client_id} successfully started"))
     csvs_received = 0
     try:
         data = ''
@@ -195,7 +193,7 @@ class Boundary:
                 if data == EOF_MARKER:
                     await self._send_eof_marker(csvs_received, client_id)
                     csvs_received += 1
-                    logging.info(self.green(f"EOF received for CSV #{csvs_received} from client {addr[0]}:{addr[1]}"))
+                    logging.info(Printer.green(f"EOF received for CSV #{csvs_received} from client {addr[0]}:{addr[1]}"))
                     continue
 
                 await self._process_csv_data(data, csvs_received, client_id)
