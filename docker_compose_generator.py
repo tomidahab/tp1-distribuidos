@@ -68,8 +68,7 @@ def add_client_replicas(services, replicas):
                     "condition": "service_started"
                 }
             },
-            "volumes": ["./client:/app"],
-            "restart": "on-failure:3"  # Add restart policy
+            "volumes": ["./client:/app"]
         }
 
 def add_worker_replicas(services, worker_type, replicas, config):
@@ -92,8 +91,7 @@ def add_worker_replicas(services, worker_type, replicas, config):
                 "./server/worker/filter_by_year:/app",
                 "./server/rabbitmq:/app/rabbitmq",
                 "./server/common:/app/common"
-            ],
-            "restart": "on-failure:3"
+            ]
         },
         # TODO: Add the the rabbitmq healthcheck dependency to the rest of the workers
         "filter_by_country": {
@@ -344,6 +342,24 @@ def add_worker_replicas(services, worker_type, replicas, config):
 def configure_routers(services, config):
     """Configure router services based on worker counts."""
     
+    # Calculate producer workers counts based on upstream workers
+    producer_counts = {
+        "year_movies_router": config["client_replicas"],  # One per client
+        "movies_q5_router": config["client_replicas"],    # One per client
+        "join_credits_router": 1,                         # Always from boundary
+        "join_ratings_router": 1,                         # Always from boundary
+        "country_router": config["worker_replicas"]["filter_by_year"],  # From filter_by_year workers
+        "join_movies_router": config["worker_replicas"]["filter_by_country"],  # From filter_by_country
+        "count_router": config["worker_replicas"]["join_credits"],  # From join_credits workers
+        "average_movies_by_rating_router": config["worker_replicas"]["join_ratings"],  # From join_ratings
+        "max_min_router": config["worker_replicas"]["average_movies_by_rating"],  # From avg_movies_by_rating
+        "top_router": config["worker_replicas"]["count"],  # From count workers
+        "average_sentiment_router": config["worker_replicas"]["sentiment_analysis"],  # From sentiment workers
+        "max_min_collector_router": config["worker_replicas"]["max_min"],  # From max_min workers
+        "top_10_actors_collector_router": config["worker_replicas"]["top"],  # From top workers
+        "average_sentiment_collector_router": config["worker_replicas"]["average_sentiment"]  # From avg_sentiment
+    }
+    
     # First check if sentiment_analysis should be included
     include_sentiment_analysis = config["worker_replicas"]["sentiment_analysis"] > 0 and not config.get("comment_sentiment_analysis", True)
     
@@ -354,7 +370,7 @@ def configure_routers(services, config):
             "build": {"context": "./server", "dockerfile": "router/Dockerfile"},
             "env_file": ["./server/router/.env"],
             "environment": [
-                "NUMBER_OF_PRODUCER_WORKERS=1",
+                f"NUMBER_OF_PRODUCER_WORKERS={producer_counts['year_movies_router']}",
                 "INPUT_QUEUE=boundary_movies_router",
                 f"OUTPUT_QUEUES={','.join([f'filter_by_year_worker_{i}' for i in range(1, year_filter_workers + 1)])}",
                 "BALANCER_TYPE=round_robin"
@@ -367,7 +383,7 @@ def configure_routers(services, config):
             ],
             "restart": "on-failure:3"
         }
-    # TODO: Add the rabbitmq healthcheck dependency to the rest of the routers
+
     # Only add movies_q5_router if sentiment_analysis is enabled
     if include_sentiment_analysis:
         sentiment_analysis_workers = config["worker_replicas"]["sentiment_analysis"]
@@ -375,7 +391,7 @@ def configure_routers(services, config):
             "build": {"context": "./server", "dockerfile": "router/Dockerfile"},
             "env_file": ["./server/router/.env"],
             "environment": [
-                "NUMBER_OF_PRODUCER_WORKERS=1",
+                f"NUMBER_OF_PRODUCER_WORKERS={producer_counts['movies_q5_router']}",
                 "INPUT_QUEUE=boundary_movies_Q5_router",
                 f"OUTPUT_QUEUES={','.join([f'sentiment_analysis_worker_{i}' for i in range(1, sentiment_analysis_workers + 1)])}",
                 "BALANCER_TYPE=round_robin"
@@ -395,7 +411,7 @@ def configure_routers(services, config):
             "build": {"context": "./server", "dockerfile": "router/Dockerfile"},
             "env_file": ["./server/router/.env"],
             "environment": [
-                "NUMBER_OF_PRODUCER_WORKERS=1",
+                f"NUMBER_OF_PRODUCER_WORKERS={producer_counts['join_credits_router']}",
                 "INPUT_QUEUE=boundary_credits_router",
                 f"OUTPUT_QUEUES={','.join([f'join_credits_worker_{i}_credits' for i in range(1, join_credits_workers + 1)])}",
                 "BALANCER_TYPE=round_robin"
@@ -415,7 +431,7 @@ def configure_routers(services, config):
             "build": {"context": "./server", "dockerfile": "router/Dockerfile"},
             "env_file": ["./server/router/.env"],
             "environment": [
-                "NUMBER_OF_PRODUCER_WORKERS=1",
+                f"NUMBER_OF_PRODUCER_WORKERS={producer_counts['join_ratings_router']}",
                 "INPUT_QUEUE=boundary_ratings_router",
                 f"OUTPUT_QUEUES={','.join([f'join_ratings_worker_{i}_ratings' for i in range(1, join_ratings_workers + 1)])}",
                 "BALANCER_TYPE=round_robin"
@@ -435,7 +451,7 @@ def configure_routers(services, config):
             "build": {"context": "./server", "dockerfile": "router/Dockerfile"},
             "env_file": ["./server/router/.env"],
             "environment": [
-                "NUMBER_OF_PRODUCER_WORKERS=2",
+                f"NUMBER_OF_PRODUCER_WORKERS={producer_counts['country_router']}",
                 "INPUT_QUEUE=country_router",
                 f"OUTPUT_QUEUES={','.join([f'filter_by_country_worker_{i}' for i in range(1, filter_by_country_workers + 1)])}",
                 "BALANCER_TYPE=round_robin"
@@ -463,7 +479,7 @@ def configure_routers(services, config):
             "build": {"context": "./server", "dockerfile": "router/Dockerfile"},
             "env_file": ["./server/router/.env"],
             "environment": [
-                "NUMBER_OF_PRODUCER_WORKERS=2",
+                f"NUMBER_OF_PRODUCER_WORKERS={producer_counts['join_movies_router']}",
                 "INPUT_QUEUE=join_movies_router",
                 f"OUTPUT_QUEUES={','.join(output_queues)}",
                 "EXCHANGE_TYPE=fanout",
@@ -495,7 +511,7 @@ def configure_routers(services, config):
             "build": {"context": "./server", "dockerfile": "router/Dockerfile"},
             "env_file": ["./server/router/.env"],
             "environment": [
-                "NUMBER_OF_PRODUCER_WORKERS=2",
+                f"NUMBER_OF_PRODUCER_WORKERS={producer_counts['count_router']}",
                 "INPUT_QUEUE=count_router",
                 f"OUTPUT_QUEUES={output_queues}",
                 "BALANCER_TYPE=shard_by_ascii"
@@ -518,7 +534,7 @@ def configure_routers(services, config):
             "build": {"context": "./server", "dockerfile": "router/Dockerfile"},
             "env_file": ["./server/router/.env"],
             "environment": [
-                "NUMBER_OF_PRODUCER_WORKERS=2",
+                f"NUMBER_OF_PRODUCER_WORKERS={producer_counts['average_movies_by_rating_router']}",
                 "INPUT_QUEUE=average_movies_by_rating_router",
                 f"OUTPUT_QUEUES={output_queues}",
                 "BALANCER_TYPE=shard_by_ascii"
@@ -541,7 +557,7 @@ def configure_routers(services, config):
             "build": {"context": "./server", "dockerfile": "router/Dockerfile"},
             "env_file": ["./server/router/.env"],
             "environment": [
-                "NUMBER_OF_PRODUCER_WORKERS=1",
+                f"NUMBER_OF_PRODUCER_WORKERS={producer_counts['max_min_router']}",
                 "INPUT_QUEUE=max_min_router",
                 f"OUTPUT_QUEUES={output_queues}",
                 "BALANCER_TYPE=shard_by_ascii"
@@ -564,7 +580,7 @@ def configure_routers(services, config):
             "build": {"context": "./server", "dockerfile": "router/Dockerfile"},
             "env_file": ["./server/router/.env"],
             "environment": [
-                "NUMBER_OF_PRODUCER_WORKERS=4",
+                f"NUMBER_OF_PRODUCER_WORKERS={producer_counts['top_router']}",
                 "INPUT_QUEUE=top_router",
                 f"OUTPUT_QUEUES={output_queues}",
                 "BALANCER_TYPE=shard_by_ascii"
@@ -589,7 +605,7 @@ def configure_routers(services, config):
             "build": {"context": "./server", "dockerfile": "router/Dockerfile"},
             "env_file": ["./server/router/.env"],
             "environment": [
-                "NUMBER_OF_PRODUCER_WORKERS=2",
+                f"NUMBER_OF_PRODUCER_WORKERS={producer_counts['average_sentiment_router']}",
                 "INPUT_QUEUE=average_sentiment_router",
                 f"OUTPUT_QUEUES={output_queues}",
                 "BALANCER_TYPE=shard_by_ascii"
@@ -608,7 +624,7 @@ def configure_routers(services, config):
             "build": {"context": "./server", "dockerfile": "router/Dockerfile"},
             "env_file": ["./server/router/.env"],
             "environment": [
-                "NUMBER_OF_PRODUCER_WORKERS=1",
+                f"NUMBER_OF_PRODUCER_WORKERS={producer_counts['max_min_collector_router']}",
                 "INPUT_QUEUE=max_min_collector_router",
                 "OUTPUT_QUEUES=collector_max_min_worker",
                 "BALANCER_TYPE=round_robin"
@@ -626,7 +642,7 @@ def configure_routers(services, config):
             "build": {"context": "./server", "dockerfile": "router/Dockerfile"},
             "env_file": ["./server/router/.env"],
             "environment": [
-                "NUMBER_OF_PRODUCER_WORKERS=1",
+                f"NUMBER_OF_PRODUCER_WORKERS={producer_counts['top_10_actors_collector_router']}",
                 "INPUT_QUEUE=top_10_actors_collector_router",
                 "OUTPUT_QUEUES=collector_top_10_actors_worker",
                 "BALANCER_TYPE=round_robin"
@@ -644,7 +660,7 @@ def configure_routers(services, config):
             "build": {"context": "./server", "dockerfile": "router/Dockerfile"},
             "env_file": ["./server/router/.env"],
             "environment": [
-                "NUMBER_OF_PRODUCER_WORKERS=2",
+                f"NUMBER_OF_PRODUCER_WORKERS={producer_counts['average_sentiment_collector_router']}",
                 "INPUT_QUEUE=average_sentiment_collector_router",
                 "OUTPUT_QUEUES=collector_average_sentiment_worker",
                 "BALANCER_TYPE=round_robin"
