@@ -185,7 +185,6 @@ class Worker:
         """Send data to the top5 queue in our exchange"""
 
         message = self._add_metadata(client_id,self.dictionary_countries_budget_by_client[client_id])
-        logging.info(f"sending message = {str(message)}")
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
             routing_key=RESPONSE_QUEUE,
             message=Serializer.serialize(message),
