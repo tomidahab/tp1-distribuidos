@@ -13,9 +13,6 @@ AVERAGE_MOVIES_BY_RATING=1
 MAX_MIN=1
 TOP=1
 AVERAGE_SENTIMENT=2
-COLLECTOR_MAX_MIN=1
-COLLECTOR_TOP_10_ACTORS=1
-COLLECTOR_AVERAGE_SENTIMENT=1
 INCLUDE_SENTIMENT_ANALYSIS=false
 
 # Parse command line arguments
@@ -69,22 +66,10 @@ while [[ $# -gt 0 ]]; do
       AVERAGE_SENTIMENT="$2"
       shift 2
       ;;
-    --collector-max-min)
-      COLLECTOR_MAX_MIN="$2"
-      shift 2
-      ;;
-    --collector-top-10-actors)
-      COLLECTOR_TOP_10_ACTORS="$2"
-      shift 2
-      ;;
         
     --include-sentiment-analysis)
       INCLUDE_SENTIMENT_ANALYSIS=true
       shift
-      ;;
-    --collector-average-sentiment)
-      COLLECTOR_AVERAGE_SENTIMENT="$2"
-      shift 2
       ;;
     *)
       echo "Unknown option: $1"
@@ -125,9 +110,6 @@ python3 docker_compose_generator.py \
   --max-min "${MAX_MIN}" \
   --top "${TOP}" \
   --average-sentiment "${AVERAGE_SENTIMENT}" \
-  --collector-max-min "${COLLECTOR_MAX_MIN}" \
-  --collector-top-10-actors "${COLLECTOR_TOP_10_ACTORS}" \
-  --collector-average-sentiment "${COLLECTOR_AVERAGE_SENTIMENT}" \
   ${SENTIMENT_ARGS}
 
 echo "Docker Compose configuration generated successfully!"

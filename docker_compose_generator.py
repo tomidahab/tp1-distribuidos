@@ -691,12 +691,14 @@ def main():
     parser.add_argument('--max-min', type=int, default=1, help='Number of max_min workers')
     parser.add_argument('--top', type=int, default=1, help='Number of top workers')
     parser.add_argument('--average-sentiment', type=int, default=2, help='Number of average_sentiment workers')
-    parser.add_argument('--collector-max-min', type=int, default=1, help='Include collector_max_min worker')
-    parser.add_argument('--collector-top-10-actors', type=int, default=1, help='Include collector_top_10_actors worker')
-    parser.add_argument('--collector-average-sentiment', type=int, default=1, help='Include collector_average_sentiment worker')
     parser.add_argument('--include-sentiment-analysis', action='store_true', help='Include sentiment_analysis workers (uncommented)')
     
     args = parser.parse_args()
+    
+    # Collectors always have exactly one replica, cannot be 0
+    collector_max_min = 1
+    collector_top_10_actors = 1
+    collector_average_sentiment = 1
     
     config = {
         "client_replicas": args.clients,
@@ -711,12 +713,11 @@ def main():
             "max_min": args.max_min,
             "top": args.top,
             "average_sentiment": args.average_sentiment,
-            "collector_max_min": args.collector_max_min,
-            "collector_top_10_actors": args.collector_top_10_actors,
-            "collector_average_sentiment": args.collector_average_sentiment
+            "collector_max_min": collector_max_min,
+            "collector_top_10_actors": collector_top_10_actors,
+            "collector_average_sentiment": collector_average_sentiment
         },
         "comment_sentiment_analysis": not args.include_sentiment_analysis
-
     }
     
     docker_compose = generate_docker_compose(config)
