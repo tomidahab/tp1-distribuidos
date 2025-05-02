@@ -4,6 +4,7 @@ import signal
 import os
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
+from common.Printer import Printer
 from dotenv import load_dotenv
 import ast
 
@@ -141,7 +142,7 @@ class Worker:
             query = deserialized_message.get("query")
             eof_marker = deserialized_message.get("EOF_MARKER")
             if eof_marker:
-                logging.info(f"\033[95mReceived EOF marker for client_id '{client_id}'\033[0m")
+                logging.info(Printer.yellow(f"Received EOF marker for client_id '{client_id}'"))
                 await self.send_eq_one_country(client_id, data, self.producer_queue_names[0], True)
                 await message.ack()
                 return

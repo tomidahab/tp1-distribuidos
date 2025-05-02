@@ -5,6 +5,7 @@ import time
 import os
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
+from common.Printer import Printer
 from transformers import pipeline
 from dotenv import load_dotenv
 
@@ -97,7 +98,7 @@ class SentimentWorker:
             logging.info(f"Received message from client_id '{client_id}'")
             
             if eof_marker:
-                logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}'\033[0m")
+                logging.info(Printer.yellow(f"Received EOF marker for client_id '{client_id}'"))
                 # Pass through EOF marker to response queue
                 response_message = {
                     "client_id": client_id,
@@ -203,7 +204,7 @@ class SentimentWorker:
         
         total_time = time.time() - start_time
         
-        logging.info(f"\033[32mCompleted sentiment analysis of {total_movies} movies in {total_time:.2f} seconds\033[0m")
+        logging.info(Printer.green(f"Completed sentiment analysis of {total_movies} movies in {total_time:.2f} seconds"))
         
         return processed_movies
     

@@ -4,6 +4,7 @@ import signal
 import os
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
+from common.Printer import Printer
 from dotenv import load_dotenv
 
 logging.basicConfig(
@@ -188,9 +189,9 @@ class Worker:
             eof_marker = deserialized_message.get("EOF_MARKER")
             # Check if this is an EOF marker message
             if eof_marker:
-                logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}' for current_queue_index {self.current_queue_index}\033[0m")
+                logging.info(Printer.yellow(f"Received EOF marker for client_id '{client_id}' for current_queue_index {self.current_queue_index}"))
                 if self.current_queue_index == 1  and client_id in self.collected_data:
-                    logging.info(f"\033[92mJoined data for client {client_id} with EOF marker\033[0m")
+                    logging.info(Printer.green(f"Joined data for client {client_id} with EOF marker"))
                     await self.send_data(client_id, data, True)
                     del self.collected_data[client_id]
                 
@@ -198,12 +199,12 @@ class Worker:
                 # Check if all clients have been processed
                 self.number_of_clients_processed += 1
                 if self.number_of_clients_processed >= self.number_of_clients:
-                    logging.info(f"\033[92mAll clients processed, switching to next queue\033[0m")
+                    logging.info(Printer.green(f"All clients processed, switching to next queue"))
                     try:
                         # TODO: Handle this properly
                         await self._switch_to_next_queue()  # Switch to next queue
                     except Exception as e:
-                        logging.info(f"\033[91mError switching to next queue: {e}\033[0m")
+                        logging.info(Printer.red(f"Error switching to next queue: {e}"))
                         await self._switch_to_next_queue()  # Switch to next queue
                         
                     self.number_of_clients_processed = 0

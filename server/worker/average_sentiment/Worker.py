@@ -4,6 +4,7 @@ import signal
 import os
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
+from common.Printer import Printer
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -124,7 +125,7 @@ class Worker:
             eof_marker = deserialized_message.get("EOF_MARKER", False)
             
             if eof_marker:
-                logging.info(f"Received EOF marker for client_id '{client_id}'")
+                logging.info(Printer.yellow(f"Received EOF marker for client_id '{client_id}'"))
                 
                 if client_id in self.client_data:
                     # Calculate final averages
