@@ -12,7 +12,6 @@ CLIENT_ID = os.getenv("CLIENT_ID")
 
 
 def main():
-    time.sleep(90)
     global client
     client = Client(name=CLIENT_ID)
     config = Config()
