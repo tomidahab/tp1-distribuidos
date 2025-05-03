@@ -89,7 +89,7 @@ services:
       - INPUT_QUEUE=boundary_credits_router
       - OUTPUT_QUEUES=join_credits_worker_1_credits
       - BALANCER_TYPE=round_robin
-      - NUMBER_OF_CLIENTS=1
+      - NUMBER_OF_CLIENTS=3
     depends_on:
       - rabbitmq
     volumes:
@@ -109,7 +109,7 @@ services:
       - ROUTER_CONSUME_QUEUE_MOVIES=join_credits_worker_1_movies
       - ROUTER_CONSUME_QUEUE_CREDITS=join_credits_worker_1_credits
       - ROUTER_PRODUCER_QUEUE=count_router
-      - NUMBER_OF_CLIENTS=1
+      - NUMBER_OF_CLIENTS=3
     depends_on:
       - rabbitmq
     volumes:
@@ -243,7 +243,7 @@ services:
       - INPUT_QUEUE=boundary_ratings_router
       - OUTPUT_QUEUES=join_ratings_worker_1_ratings
       - BALANCER_TYPE=round_robin
-      - NUMBER_OF_CLIENTS=1
+      - NUMBER_OF_CLIENTS=3
     depends_on:
       - rabbitmq
     volumes:
@@ -262,7 +262,7 @@ services:
       - ROUTER_CONSUME_QUEUE_MOVIES=join_ratings_worker_1_movies
       - ROUTER_CONSUME_QUEUE_RATINGS=join_ratings_worker_1_ratings
       - ROUTER_PRODUCER_QUEUE=average_movies_by_rating_router
-      - NUMBER_OF_CLIENTS=1
+      - NUMBER_OF_CLIENTS=3
     depends_on:
       - rabbitmq
     volumes:
