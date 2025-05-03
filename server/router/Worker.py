@@ -142,7 +142,7 @@ class RouterWorker:
             # Handle EOF marker specially - we need to count them and possibly send to all queues
             if eof_marker:
                 self.end_of_file_received[client_id] = self.end_of_file_received.get(client_id, 0) + 1
-                logging.info(f"Received EOF marker for client {client_id} - count: {self.end_of_file_received[client_id]}")
+                logging.info(f"\033[33mReceived EOF marker for client {client_id} - count: {self.end_of_file_received[client_id]}\033[0m")
                 
                 # Once we've received all expected EOF markers, send to all output queues
                 if self.end_of_file_received[client_id] >= self.number_of_producer_workers:

@@ -26,7 +26,7 @@ ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_data_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
 
-NUMBER_OF_CLIENTS = int(os.getenv("NUMBER_OF_CLIENTS",2))
+NUMBER_OF_CLIENTS = int(os.getenv("NUMBER_OF_CLIENTS",1))
 
 class Worker:
     def __init__(self, 
@@ -190,7 +190,7 @@ class Worker:
             sigterm = deserialized_message.get("SIGTERM")
             # Check if this is an EOF marker message
             if eof_marker:
-                logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}' for current_queue_index {self.current_queue_index}\033[0m")
+                logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}' for queue '{self.consumer_queue_names[self.current_queue_index]}'\033[0m")
                 if self.current_queue_index == 1  and client_id in self.collected_data:
                     logging.info(f"\033[92mJoined data for client {client_id} with EOF marker\033[0m")
                     await self.send_data(client_id, data, True)

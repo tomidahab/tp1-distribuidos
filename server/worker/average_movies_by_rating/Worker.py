@@ -131,7 +131,7 @@ class Worker:
             eof_marker = deserialized_message.get("EOF_MARKER")
             sigterm = deserialized_message.get("SIGTERM")
             if eof_marker:
-                logging.info(f"EOF marker received for client_id '{client_id}'")
+                logging.info(f"\033[93mEOF marker received for client_id '{client_id}'\033[0m")
                 await self.send_data(client_id, data, True)
             if sigterm:
                 logging.info(f"SIGTERM marker received for client_id '{client_id}'")
