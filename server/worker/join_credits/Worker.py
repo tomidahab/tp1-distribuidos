@@ -24,15 +24,15 @@ EOF_MARKER = os.getenv("EOF_MARKER", "EOF_MARKER")
 ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
 EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "filtered_data_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
-NUMBER_OF_CLIENTS = int(os.getenv("NUMBER_OF_CLIENTS"))
+
+REQUEUE_DELAY = float(os.getenv("REQUEUE_DELAY", "0.1"))  # seconds
 
 class Worker:
     def __init__(self, 
                  consumer_queue_names=[MOVIES_ROUTER_CONSUME_QUEUE, CREDITS_ROUTER_CONSUME_QUEUE], 
                  exchange_name_producer=EXCHANGE_NAME_PRODUCER, 
                  exchange_type_producer=EXCHANGE_TYPE_PRODUCER, 
-                 producer_queue_name=ROUTER_PRODUCER_QUEUE,
-                number_of_clients=NUMBER_OF_CLIENTS):
+                 producer_queue_name=ROUTER_PRODUCER_QUEUE):
 
         self._running = True
         self.consumer_queue_names = consumer_queue_names
@@ -41,16 +41,14 @@ class Worker:
         self.exchange_type_producer = exchange_type_producer
         self.rabbitmq = RabbitMQClient()
         
-        # State to track which queue we're currently consuming from
-        self.current_queue_index = 0
-        self.consumers = {}
-        self.paused_queues = set()
+        # Client state tracking
+        self.client_states = {}  # {client_id: {'movies_done': bool}}
         
-        # Data store for processing
-        self.collected_data = {}
+        # Data store for processing - only store movies, not credits
+        self.collected_data = {}  # {client_id: {movie_id: movie_name}}
         
-        self.number_of_clients_processed = 0
-        self.number_of_clients = number_of_clients
+        # For requeue delay to avoid overwhelming the broker
+        self.requeue_delay = REQUEUE_DELAY
 
         # Set up signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -62,10 +60,10 @@ class Worker:
         """Run the worker, connecting to RabbitMQ and consuming messages"""
         # Connect to RabbitMQ
         if not await self._setup_rabbitmq():
-            logging.error(f"Failed to set up RabbitMQ connection. Exiting.")
+            logging.error("Failed to set up RabbitMQ connection. Exiting.")
             return False
         
-        logging.info(f"Worker running and consuming from queue '{self.consumer_queue_names[self.current_queue_index]}'")
+        logging.info("Worker running and consuming from both queues simultaneously")
         
         # Keep the worker running until shutdown is triggered
         while self._running:
@@ -118,147 +116,145 @@ class Worker:
             return False
         # --------------------------------------------------
         
-        # Start consuming from the first queue only
-        await self._start_consuming_from_current_queue()
-
-        return True
-    
-    async def _start_consuming_from_current_queue(self):
-        """Start consuming from the current queue index"""
-        queue_name = self.consumer_queue_names[self.current_queue_index]
-        
-        # Only start consuming if not already consuming from this queue
-        if queue_name not in self.consumers:
-            logging.info(f"Starting to consume from queue: {queue_name}")
-            
+        # Start consuming from both queues simultaneously
+        for i, queue_name in enumerate(self.consumer_queue_names):
+            callback = self._process_movies_message if i == 0 else self._process_credits_message
             success = await self.rabbitmq.consume(
                 queue_name=queue_name,
-                callback=self._process_message,
+                callback=callback,
                 no_ack=False
             )
-
             if not success:
                 logging.error(f"Failed to set up consumer for queue '{queue_name}'")
                 return False
-                
-            self.consumers[queue_name] = True
-            
-            # Remove from paused queues if it was there
-            if queue_name in self.paused_queues:
-                self.paused_queues.remove(queue_name)
-                
+            logging.info(f"Started consuming from {queue_name}")
+
         return True
     
-    async def _switch_to_next_queue(self):
-        """Switch to the next queue in the list"""
-        try:    
-            # Pause current queue
-            current_queue = self.consumer_queue_names[self.current_queue_index]
-            logging.info(f"Pausing consumption from queue: {current_queue}")
-            
-            # Mark current queue as paused
-            self.paused_queues.add(current_queue)
-            
-            # Cancel the consumer for the current queue to stop consuming
-            await self.rabbitmq.cancel_consumer(current_queue)
-            
-            if current_queue in self.consumers:
-                del self.consumers[current_queue]
-            
-            # Update index to next queue with wrap-around
-            self.current_queue_index = (self.current_queue_index + 1) % len(self.consumer_queue_names)
-            next_queue = self.consumer_queue_names[self.current_queue_index]
-            
-            logging.info(f"Switching to queue: {next_queue}")
-            
-            # Start consuming from the next queue
-            await self._start_consuming_from_current_queue()
-        except Exception as e:
-            logging.error(f"Error switching to next queue: {e}")
-            raise e
-    
-    async def _process_message(self, message):
-        """Process a message from the queue"""
+    async def _process_movies_message(self, message):
+        """Process a message from the movies queue"""
         try:
             deserialized_message = Serializer.deserialize(message.body)
-            # Extract client_id and data from the deserialized message
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER")
-            # Check if this is an EOF marker message
-            if eof_marker:
-                logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}' for current_queue_index {self.current_queue_index}\033[0m")
-                if self.current_queue_index == 1  and client_id in self.collected_data:
-                    logging.info(f"\033[92mJoined data for client {client_id} with EOF marker\033[0m")
-                    await self.send_data(client_id, data, True)
-                    del self.collected_data[client_id]
-
-                await message.ack()
-                # Check if all clients have been processed
-                self.number_of_clients_processed += 1
-                if self.number_of_clients_processed >= self.number_of_clients:
-                    logging.info(f"\033[92mAll clients processed, switching to next queue\033[0m")
-                    try:
-                        # TODO: Handle this properly
-                        await self._switch_to_next_queue()  # Switch to next queue
-                    except Exception as e:
-                        logging.info(f"\033[91mError switching to next queue: {e}\033[0m")
-                        await self._switch_to_next_queue()  # Switch to next queue
-                        
-                    self.number_of_clients_processed = 0
-                return
             
-            if data:
-                # If this is the first queue, store data for later join
-                if self.current_queue_index == 0:
-                    # Save data indexed by client_id (assuming it can process multiple clients)
-                    if client_id not in self.collected_data:
-                        self.collected_data[client_id] = {}
-                    for movie in data:
-                        movie_id = movie.get('id')
-                        movie_name = movie.get('name')
-                        if movie_id and movie_name:
-                            self.collected_data[client_id][movie_id] = movie_name
-                    
-                # If this is the second queue, join with stored data and send result
-                elif self.current_queue_index == 1 and client_id in self.collected_data:
-                    
-                    # Join the data
+            # Initialize client state if this is a new client
+            if client_id not in self.client_states:
+                self.client_states[client_id] = {'movies_done': False}
+                logging.info(f"\033[33mDiscovered new client by movies queue: {client_id}\033[0m")
+                
+            # Handle EOF marker for movies
+            if eof_marker:
+                logging.info(f"Received EOF marker for movies from client '{client_id}'")
+                self.client_states[client_id]['movies_done'] = True
+            
+            # Process movie data
+            elif data:
+                # Initialize movie data storage for this client
+                if client_id not in self.collected_data:
+                    self.collected_data[client_id] = {}
+                
+                # Store movie data
+                for movie in data:
+                    movie_id = movie.get('id')
+                    movie_name = movie.get('name')
+                    if movie_id and movie_name:
+                        self.collected_data[client_id][movie_id] = movie_name
+            
+            await message.ack()
+            
+        except Exception as e:
+            logging.error(f"Error processing movies message: {e}")
+            # Reject the message and requeue it
+            await message.reject(requeue=True)
+    
+    async def _process_credits_message(self, message):
+        """Process a message from the credits queue"""
+        try:
+            deserialized_message = Serializer.deserialize(message.body)
+            client_id = deserialized_message.get("client_id")
+            data = deserialized_message.get("data")
+            eof_marker = deserialized_message.get("EOF_MARKER")
+            
+            # Initialize client state if this is a new client
+            if client_id not in self.client_states:
+                self.client_states[client_id] = {'movies_done': False}
+                logging.info(f"\033[33mDiscovered new client by credits queue: {client_id}\033[0m")
+                
+            # Check if we've received all movies for this client
+            movies_done = self.client_states[client_id]['movies_done']
+            if not movies_done:
+                # We haven't received all movies yet, reject and requeue the message
+                logging.debug(f"Not all movies received for client {client_id}, requeuing credits message")
+                await message.reject(requeue=True)
+                await asyncio.sleep(self.requeue_delay)
+                return
+
+            if eof_marker:
+                logging.info(f"Received EOF marker for credits from client '{client_id}'")
+                await self._finalize_client(client_id)
+            
+            elif data:
+                if client_id in self.collected_data:
                     joined_data = self._join_data(
                         self.collected_data[client_id],
                         data
                     )
-                    
                     if joined_data:
-                        # Send joined data
                         await self.send_data(client_id, joined_data)
-            
-            # Acknowledge message
+
             await message.ack()
             
         except Exception as e:
-            logging.error(f"Error processing message: {e}")
+            logging.error(f"Error processing credits message: {e}")
             # Reject the message and requeue it
             await message.reject(requeue=True)
+    
+    async def _finalize_client(self, client_id):
+        """Finalize processing for a client whose data is complete"""        
+        # Send EOF marker to next stage
+        await self.send_data(client_id, [], True)
+        
+        # Clean up client data to free memory
+        if client_id in self.collected_data:
+            del self.collected_data[client_id]
+        
+        # Completely remove all traces of the client
+        del self.client_states[client_id]
+        
+        logging.info(f"Client {client_id} processing completed")
     
     def _join_data(self, movies_data, credits_data):
         """
         Join the movies and credits data
-        This is a simplified implementation - replace with your actual join logic
+        
+        Args:
+            movies_data (dict): Dict of movie_id to movie_name
+            credits_data (list): List of credits objects with movie_id and cast fields
+            
+        Returns:
+            list: List of dicts with actor names
         """
         try:
             if not movies_data or not credits_data:
                 return []
                 
-            # Create a dict to efficiently look up credits by movie ID
+            # Create a set of movie ids from movies_data for efficient lookup
+            movie_ids = set(movies_data.keys())
+            
+            # List to collect actors
             actors = []
+            
+            # Process each credit, adding actors to our result if the movie is in our dataset
             for credits in credits_data:
                 movie_id = credits.get("movie_id")
-                if movie_id in movies_data:
-                    for actor in credits.get("cast"):
+                if movie_id and movie_id in movie_ids:
+                    for actor in credits.get("cast", []):
                         actors.append({
                             "name": actor
                         })
+            
             return actors
             
         except Exception as e:
