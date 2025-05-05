@@ -20,7 +20,7 @@ MOVIES_ROUTER_QUEUE = os.getenv("MOVIES_ROUTER_QUEUE")
 MOVIES_ROUTER_Q5_QUEUE = os.getenv("MOVIES_ROUTER_Q5_QUEUE")
 CREDITS_ROUTER_QUEUE = os.getenv("CREDITS_ROUTER_QUEUE")
 RATINGS_ROUTER_QUEUE = os.getenv("RATINGS_ROUTER_QUEUE")
-BUDGET_WORKERS_QUEUE = os.getenv("COUNTRIES_BUDGET_QUEUE","countries_budget_workers")
+BUDGET_WORKERS_QUEUE = os.getenv("COUNTRIES_BUDGET_QUEUE","boundary_countries_budget")
 
 COLUMNS_Q1 = {'genres': 3, 'id':5, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
 COLUMNS_Q2 = {'budget':2,'genres': 3, 'imdb_id':6, 'original_title': 8, 'production_countries': 13, 'release_date': 14}
@@ -242,8 +242,7 @@ class Boundary:
         prepared_data = self._addMetaData(client_id, None, isEOF, not isEOF)
         if csvs_received == MOVIES_CSV:
            await self._send_data_to_rabbitmq_queue(prepared_data, self.movies_router_queue)
-           for i in range(0,COUNTRIES_BUDGET_WORKERS):
-                await self._send_data_to_rabbitmq_queue(prepared_data, BUDGET_WORKERS_QUEUE)
+           await self._send_data_to_rabbitmq_queue(prepared_data, BUDGET_WORKERS_QUEUE)
            await self._send_data_to_rabbitmq_queue(prepared_data, self.movies_router_q5_queue)
         elif csvs_received == CREDITS_CSV:
             await self._send_data_to_rabbitmq_queue(prepared_data, self.credits_router_queue)

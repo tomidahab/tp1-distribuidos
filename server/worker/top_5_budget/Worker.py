@@ -5,6 +5,8 @@ import os
 import signal
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
+import os
+from dotenv import load_dotenv
 
 logging.basicConfig(
     level=logging.INFO,
@@ -12,9 +14,11 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
+load_dotenv()
+
+
 QUERY_2 = os.getenv("QUERY_2", "2")
-CONSUMER_QUEUE_NAME = "top_5_budget_queue"
-RES_QUEUE = "query2_res"
+CONSUMER_QUEUE_NAME = os.getenv("INPUT_QUEUE", "response_queue")
 RELEASE_DATE = "release_date"
 EXCHANGE_NAME_PRODUCER = "top_5_budget_exchange"
 EXCHANGE_TYPE_PRODUCER = "direct"
@@ -23,11 +27,11 @@ BUDGET = "budget"
 ISO_3166_1 = "iso_3166_1"
 NAME = "name"
 EOF_MARKER = "EOF_MARKER"
-RESPONSE_QUEUE = "response_queue"
+RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
 COUNTRIES_BUDGET_WORKERS = 2 #TODO move this into docker-compose
 
 class Worker:
-    def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[CONSUMER_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[RES_QUEUE]):
+    def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[CONSUMER_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[RESPONSE_QUEUE]):
 
         self._running = True
         self.consumer_queue_names = consumer_queue_names
