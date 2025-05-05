@@ -199,7 +199,6 @@ class Worker:
         self.dictionary_countries_budget_by_client[client_id] = {}
 
         logging.info(f"[Worker1] Published to exchange '{self.exchange_name_producer}' routing_key='{ROUTER_PRODUCER_QUEUE}'")
-        logging.info(f"sent: {message}")
 
 
     def _filter_data(self, data, client_id):
