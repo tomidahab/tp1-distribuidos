@@ -213,6 +213,7 @@ services:
       - ./server/worker/filter_by_country:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
+
 # ===================================================================================
 # ------------------------------------ Q3 -------------------------------------------
 # ===================================================================================
@@ -226,7 +227,7 @@ services:
     environment:
       - NUMBER_OF_PRODUCER_WORKERS=1
       - INPUT_QUEUE=boundary_ratings_router
-      - OUTPUT_QUEUES=join_ratings_worker_1_ratings,join_ratings_worker_2_ratings
+      - OUTPUT_QUEUES=join_ratings_worker_1_ratings,join_ratings_worker_2_ratings,join_ratings_worker_3_ratings
       - BALANCER_TYPE=round_robin
     depends_on:
       - rabbitmq
@@ -269,6 +270,23 @@ services:
       - ./server/worker/join_ratings:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
+
+  join_ratings_worker_3:
+    build:
+      context: ./server
+      dockerfile: worker/join_ratings/Dockerfile
+    env_file:
+      - ./server/worker/join_ratings/.env
+    environment:
+      - ROUTER_CONSUME_QUEUE_MOVIES=join_ratings_worker_3_movies
+      - ROUTER_CONSUME_QUEUE_RATINGS=join_ratings_worker_3_ratings
+      - ROUTER_PRODUCER_QUEUE=average_movies_by_rating_router
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/worker/join_ratings:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
       
   average_movies_by_rating_router:
     build:
@@ -277,7 +295,7 @@ services:
     env_file:
       - ./server/router/.env
     environment:
-      - NUMBER_OF_PRODUCER_WORKERS=2
+      - NUMBER_OF_PRODUCER_WORKERS=3
       - INPUT_QUEUE=average_movies_by_rating_router
       - OUTPUT_QUEUES=[["average_movies_by_rating_worker_1"]]
       - BALANCER_TYPE=shard_by_ascii
@@ -387,7 +405,7 @@ services:
     environment:
       - NUMBER_OF_PRODUCER_WORKERS=2
       - INPUT_QUEUE=join_movies_router
-      - OUTPUT_QUEUES=join_ratings_worker_1_movies,join_ratings_worker_2_movies,join_credits_worker_1_movies,join_credits_worker_2_movies
+      - OUTPUT_QUEUES=join_ratings_worker_1_movies,join_ratings_worker_2_movies,join_ratings_worker_3_movies,join_credits_worker_1_movies,join_credits_worker_2_movies
       - EXCHANGE_TYPE=fanout
       - EXCHANGE_NAME=join_router_exchange
     depends_on:
