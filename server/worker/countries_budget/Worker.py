@@ -4,12 +4,16 @@ import logging
 import signal
 from rabbitmq.Rabbitmq_client import RabbitMQClient
 from common.Serializer import Serializer
+import os
+from dotenv import load_dotenv
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-8s %(message)s",
     datefmt="%H:%M:%S",
 )
+
+load_dotenv()
 
 #TODO move this to a common config file or common env var since boundary hasthis too
 BOUNDARY_QUEUE_NAME = "countries_budget_workers"
@@ -25,13 +29,15 @@ BUDGET = "budget"
 ISO_3166_1 = "iso_3166_1"
 NAME = "name"
 EOF_MARKER = "EOF_MARKER"
-RESPONSE_QUEUE = "top_5_budget_queue"
+ROUTER_PRODUCER_QUEUE = "top_5_budget_queue"
 QUERY_2 = "query_2"
 
 
+ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE")
+ROUTER_PRODUCER_QUEUE = os.getenv("ROUTER_PRODUCER_QUEUE")
 
 class Worker:
-    def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[BOUNDARY_QUEUE_NAME], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[RESPONSE_QUEUE]):
+    def __init__(self, exchange_name_consumer=None, exchange_type_consumer=None, consumer_queue_names=[ROUTER_CONSUME_QUEUE], exchange_name_producer=EXCHANGE_NAME_PRODUCER, exchange_type_producer=EXCHANGE_TYPE_PRODUCER, producer_queue_names=[ROUTER_PRODUCER_QUEUE]):
 
         self._running = True
         self.consumer_queue_names = consumer_queue_names
@@ -164,7 +170,7 @@ class Worker:
                 logging.info(f"received sigterm from :{client_id}")
 
                 await self.rabbitmq.publish_to_queue(
-                    queue_name=RESPONSE_QUEUE,
+                    queue_name=ROUTER_PRODUCER_QUEUE,
                     message=Serializer.serialize(response_message),
                     persistent=True
                 )
@@ -186,13 +192,14 @@ class Worker:
 
         message = self._add_metadata(client_id,self.dictionary_countries_budget_by_client[client_id])
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
-            routing_key=RESPONSE_QUEUE,
+            routing_key=ROUTER_PRODUCER_QUEUE,
             message=Serializer.serialize(message),
             persistent=True
         )
         self.dictionary_countries_budget_by_client[client_id] = {}
 
-        logging.info(f"[Worker1] Published to exchange '{self.exchange_name_producer}' routing_key='{RESPONSE_QUEUE}'")
+        logging.info(f"[Worker1] Published to exchange '{self.exchange_name_producer}' routing_key='{ROUTER_PRODUCER_QUEUE}'")
+        logging.info(f"sent: {message}")
 
 
     def _filter_data(self, data, client_id):
