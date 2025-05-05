@@ -70,7 +70,7 @@ class Client:
             self.protocol.send_all(self.skt, batch)
             batch_sent += 1
             if batch_sent % 50 == 0 and "ratings" in file_path:
-                logging.info(f"Sent {batch_sent} batches so far...")
+                logging.info(f"Sent {batch_sent} batches of ratings so far...")
         self.protocol.send_all(self.skt, self.config.get_EOF())
         logging.info(f"\033[94mCSV file sent successfully with EOF: {self.config.get_EOF()}\033[0m")
         
