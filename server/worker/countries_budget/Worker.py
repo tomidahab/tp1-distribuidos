@@ -203,7 +203,6 @@ class Worker:
 
         logging.info(f"[Worker1] Published to exchange '{self.exchange_name_producer}' routing_key='{ROUTER_PRODUCER_QUEUE}'")
 
-
     def _filter_data(self, data, client_id):
         """Filter data and puts it in its dictionary"""
         for record in data:
