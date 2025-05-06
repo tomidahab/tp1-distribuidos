@@ -141,7 +141,6 @@ class Worker:
             query = deserialized_message.get("query", "")
 
             if disconnect_marker:
-                logging.info(f"\033[95mReceived DISCONNECT notification for client_id '{client_id}'\033[0m")
                 # Propagate DISCONNECT to downstream components
                 await self.send_disconnect(client_id, query)
                 await message.ack()
@@ -179,11 +178,6 @@ class Worker:
             message=Serializer.serialize(message),
             persistent=True
         )
-        
-        if not success:
-            logging.error(f"Failed to send DISCONNECT notification for client {client_id}")
-        else:
-            logging.info(f"DISCONNECT notification sent for client {client_id}")
 
     async def send_data(self, client_id, data, query, eof_marker=False):
         """Send data to the router queue with query type in metadata"""

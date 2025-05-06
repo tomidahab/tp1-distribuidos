@@ -133,7 +133,6 @@ class Worker:
             disconnect_marker = deserialized_message.get("DISCONNECT", False)
             
             if disconnect_marker:
-                logging.info(f"Disconnect marker received for client_id '{client_id}'")
                 await self._send_data(client_id, data, queue_name=self.producer_queue_name[0], disconnect_marker=True)
                 self.client_data.pop(client_id, None)
             

@@ -136,7 +136,6 @@ class Worker:
             disconnect_marker = deserialized_message.get("DISCONNECT")
 
             if disconnect_marker:
-                logging.info(f"Disconnect marker received for client_id '{client_id}'")
                 await self.send_data(client_id, data, False, disconnect_marker=True)
                 self.participations.pop(client_id, None)
 

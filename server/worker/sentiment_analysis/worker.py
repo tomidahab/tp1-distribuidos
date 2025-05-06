@@ -98,7 +98,6 @@ class SentimentWorker:
             disconnect_marker = deserialized_message.get("DISCONNECT", False)
             
             if disconnect_marker:
-                logging.info(f"Disconnect marker received for client_id '{client_id}'")
                 response_message = self._add_metadata(
                     client_id=client_id,
                     disconnect_marker=True,

@@ -247,7 +247,7 @@ class Boundary:
                         self.credits_router_queue, self.ratings_router_queue]:
         await self._send_data_to_rabbitmq_queue(prepared_data, router_queue)
     
-    logging.info(f"Sent DISCONNECT markers to all routers for client {client_id}")
+    logging.info(f"\033[91mSent DISCONNECT markers to all routers for client {client_id}\033[0m")
 
   async def _send_eof_marker(self, csvs_received, client_id):
         prepared_data = self._addMetaData(client_id, None, True)

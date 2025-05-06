@@ -133,8 +133,10 @@ class Worker:
             disconnect_marker = deserialized_message.get("DISCONNECT")
 
             if disconnect_marker:
-                logging.info(f"Disconnect marker received for client_id '{client_id}'")
-                self.client_data.pop(client_id, None)
+                removed = self.client_data.pop(client_id, None)
+                if removed is not None:
+                    logging.info(f"\033[91mDisconnect marker received for client_id '{client_id}'\033[0m")
+
 
             elif eof_marker:
                 # If we have data for this client, send it to router producer queue

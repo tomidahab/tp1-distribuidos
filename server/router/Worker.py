@@ -141,7 +141,6 @@ class RouterWorker:
 
             # Handle DISCONNECT marker - immediate propagation to all queues
             if disconnect_marker:
-                logging.info(f"Received DISCONNECT notification for client {client_id} - propagating immediately")
                 await self._send_disconnect_to_all_queues(client_id, query)
                 self.end_of_file_received.pop(client_id, None)
                 await message.ack()
@@ -277,11 +276,6 @@ class RouterWorker:
                 message=Serializer.serialize(disconnect_message),
                 persistent=True
             )
-            if not success:
-                logging.error(f"Failed to send DISCONNECT marker to fanout exchange for client {client_id}")
-            else:
-                logging.info(f"DISCONNECT marker sent to fanout exchange for client {client_id}, will be delivered to all bound queues")
-            return
         
         # For direct and other exchanges, send to each queue explicitly
         all_queues = self._get_all_queue_names()
@@ -295,8 +289,6 @@ class RouterWorker:
             if not success:
                 logging.error(f"Failed to send DISCONNECT marker to queue {queue} for client {client_id}")
         
-        logging.info(f"DISCONNECT markers sent to all {len(all_queues)} output queues for client {client_id}")
-
     async def _send_eof_to_all_queues(self, client_id, data, query=None):
         """Send EOF marker to all output queues for a specific client ID"""
         eof_message = {

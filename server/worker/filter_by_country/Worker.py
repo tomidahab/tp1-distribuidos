@@ -146,7 +146,7 @@ class Worker:
             
             # Handle DISCONNECT notifications first
             if disconnect_marker:
-                logging.info(f"\033[95mReceived DISCONNECT notification for client_id '{client_id}'\033[0m")
+                logging.info(f"\033[91mDisconnect marker received for client_id '{client_id}'\033[0m")
                 # Propagate DISCONNECT to all downstream components
                 await self.send_disconnect(client_id, query)
                 await message.ack()
@@ -200,11 +200,6 @@ class Worker:
             message=Serializer.serialize(message),
             persistent=True
         )
-
-        if not success:
-            logging.error(f"Failed to send DISCONNECT notification to primary queue for client {client_id}")
-        else:
-            logging.info(f"DISCONNECT notifications sent for client {client_id}")
 
     def _project_to_columns(self, data):
         """Project the data to only include the 'id' column"""
