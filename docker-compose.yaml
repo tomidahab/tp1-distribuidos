@@ -313,7 +313,7 @@ services:
     environment:
       - NUMBER_OF_PRODUCER_WORKERS=1
       - INPUT_QUEUE=max_min_router
-      - OUTPUT_QUEUES=[["max_min_worker_1"]]
+      - OUTPUT_QUEUES=[["max_min_worker_1"],["max_min_worker_2"]]
       - BALANCER_TYPE=shard_by_ascii
     depends_on:
       - rabbitmq
@@ -337,6 +337,21 @@ services:
       - ./server/worker/max_min:/app
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
+  max_min_worker_2:
+    build:
+      context: ./server
+      dockerfile: worker/max_min/Dockerfile
+    env_file:
+      - ./server/worker/max_min/.env
+    environment:
+      - ROUTER_CONSUME_QUEUE=max_min_worker_2
+      - ROUTER_PRODUCER_QUEUE=max_min_collector_router
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./server/worker/max_min:/app
+      - ./server/rabbitmq:/app/rabbitmq
+      - ./server/common:/app/common
 
   max_min_collector_router:
     build:
@@ -345,7 +360,7 @@ services:
     env_file:
       - ./server/router/.env
     environment:
-      - NUMBER_OF_PRODUCER_WORKERS=1
+      - NUMBER_OF_PRODUCER_WORKERS=2
       - INPUT_QUEUE=max_min_collector_router
       - OUTPUT_QUEUES=collector_max_min_worker
       - BALANCER_TYPE=round_robin

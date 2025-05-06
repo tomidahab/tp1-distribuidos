@@ -18,7 +18,7 @@ load_dotenv()
 # Constants
 ROUTER_CONSUME_QUEUE = os.getenv("ROUTER_CONSUME_QUEUE")
 RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE",)
-EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "top_actors_exchange")
+EXCHANGE_NAME_PRODUCER = os.getenv("PRODUCER_EXCHANGE", "top_max_min_exchange")
 EXCHANGE_TYPE_PRODUCER = os.getenv("PRODUCER_EXCHANGE_TYPE", "direct")
 QUERY_3 = os.getenv("QUERY_3", "3")
 
@@ -121,7 +121,7 @@ class Worker:
         return True
     
     async def _process_message(self, message):
-        """Process a message and update top actors for the client"""
+        """Process a message and update top max_min for the client"""
         try:
             # Deserialize the message
             deserialized_message = Serializer.deserialize(message.body)
@@ -134,15 +134,15 @@ class Worker:
             if eof_marker:
                 # If we have data for this client, send it to router producer queue
                 if client_id in self.client_data:
-                    top_actors = self._get_max_min(client_id)
-                    await self._send_data(client_id, top_actors, self.producer_queue_name[0], True, QUERY_3)
+                    max_min = self._get_max_min(client_id)
+                    await self._send_data(client_id, max_min, self.producer_queue_name[0], True, QUERY_3)
                     # Clean up client data after sending
                     del self.client_data[client_id]
                     logging.info(f"Sent top 10 actors for client {client_id} and cleaned up")
                 else:
                     logging.warning(f"Received EOF for client {client_id} but no data found")
             elif data:
-                # Update actors counts for this client
+                # Update max_min counts for this client
                 self._update_max_min(client_id, data)
             else:
                 logging.warning(f"Received message with no data for client {client_id}")
