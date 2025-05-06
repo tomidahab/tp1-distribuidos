@@ -118,14 +118,22 @@ class Client:
         def sender_task():
             try:
                 for file_path in file_paths:
+                    if not self.receiver_running:  # Check if shutdown was initiated
+                        break
                     self._send_csv(file_path)
                 logging.info("\033[92mAll files sent successfully\033[0m")
+            except (OSError, socket.error) as e:
+                if not self.receiver_running:  # Socket was closed due to shutdown
+                    logging.info("Sender thread stopping due to client shutdown")
+                else:
+                    logging.error(f"Socket error in sender thread: {e}")
             except Exception as e:
                 logging.error(f"Error in sender thread: {e}")
         
         sender_thread = threading.Thread(target=sender_task)
         sender_thread.start()
         return sender_thread
+    
     
     def start_receiver_thread(self):
         """
@@ -172,11 +180,15 @@ class Client:
                 except socket.timeout:
                     # Just continue if we get a timeout
                     continue
-                except ConnectionError as e:
-                    logging.error(f"Connection error in receiver thread: {e}")
+                except (ConnectionError, OSError) as e:
+                    if self.receiver_running:  # Only log as error if not during shutdown
+                        logging.error(f"Connection error in receiver thread: {e}")
+                    else:
+                        logging.info("Receiver thread stopping due to client shutdown")
                     break
         except Exception as e:
-            logging.error(f"Error in receiver thread: {e}")
+            if self.receiver_running:  # Only log as error if not during shutdown
+                logging.error(f"Error in receiver thread: {e}")
         
         logging.info("Receiver thread stopping")
 

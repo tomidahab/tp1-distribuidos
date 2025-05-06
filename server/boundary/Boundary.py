@@ -96,6 +96,7 @@ class Boundary:
 
       logging.info(f"New client {addr[0]}:{addr[1]}")
       self._client_sockets.append({client_id: client_sock})
+      #TODO: delete task if client disconnects
       asyncio.create_task(self._handle_client_connection(client_sock, addr, client_id))
 
 
