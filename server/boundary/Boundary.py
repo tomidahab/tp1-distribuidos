@@ -26,6 +26,7 @@ COLUMNS_Q3 = {'id': 1, 'rating': 2}
 COLUMNS_Q4 = {"cast": 0, "movie_id": 2}
 COLUMNS_Q5 = {'budget': 2, 'imdb_id':6, 'original_title': 8, 'overview': 9, 'revenue': 15}
 EOF_MARKER = "EOF_MARKER"
+DISCONNECT_MARKER = "DISCONNECT"
 
 RESPONSE_QUEUE = os.getenv("RESPONSE_QUEUE", "response_queue")
 MOVIES_CSV = 0
@@ -182,25 +183,26 @@ class Boundary:
     proto = self.protocol(loop)
     logging.info(self.green(f"Client ID: {client_id} successfully started"))
     csvs_received = 0
+    client_addr = f"{addr[0]}:{addr[1]}"
+
     try:
         data = ''
-        #TODO: chagne this to while skt connetion is open, or proto is connected.
         while True:
             try:
                 data = await self._receive_csv_batch(sock, proto)
                 if data == EOF_MARKER:
                     await self._send_eof_marker(csvs_received, client_id)
                     csvs_received += 1
-                    logging.info(self.green(f"EOF received for CSV #{csvs_received} from client {addr[0]}:{addr[1]}"))
+                    logging.info(self.green(f"EOF received for CSV #{csvs_received} from client {client_addr}"))
                     continue
 
                 if csvs_received == MOVIES_CSV:
                     filtered_data_q1, filtered_data_q5 = self._project_to_columns(data, [COLUMNS_Q1, COLUMNS_Q5])
-                    
+
                     # Send data for Q1 to the movies router
                     prepared_data_q1 = self._addMetaData(client_id, filtered_data_q1)
                     await self._send_data_to_rabbitmq_queue(prepared_data_q1, self.movies_router_queue)
-                    
+
                     # Send data for Q5 to the reviews router
                     prepared_data_q5 = self._addMetaData(client_id, filtered_data_q5)
                     await self._send_data_to_rabbitmq_queue(prepared_data_q5, self.movies_router_q5_queue)
@@ -218,12 +220,34 @@ class Boundary:
                     await self._send_data_to_rabbitmq_queue(prepared_data, self.ratings_router_queue)
                 
             except ConnectionError:
-                logging.info(f"Client {addr[0]}:{addr[1]} disconnected")
+                logging.info(f"Client {client_addr} disconnected")
+                logging.info(f"Treating disconnection as DISCONNECT for client {client_id}")
+                await self._send_disconnect_marker(client_id)
                 break
                
     except Exception as exc:
-        logging.error(f"Client {addr[0]}:{addr[1]} error: {exc}")
+        logging.error(f"Client {client_addr} error: {exc}")
         logging.exception(exc)
+        # Also send DISCONNECT markers on uncaught exceptions
+        logging.info(f"Treating error as DISCONNECT for client {client_id}")
+        await self._send_disconnect_marker(client_id)
+
+  async def _send_disconnect_marker(self, client_id):
+    """
+    Send DISCONNECT marker to all router queues for a specific client
+    
+    Args:
+        client_id: The client ID for which to send DISCONNECT marker
+    """
+    # Create metadata with DISCONNECT flag set to True
+    prepared_data = self._addMetaData(client_id, None, is_eof_marker=False, is_disconnect=True)
+    
+    # Send to all router queues
+    for router_queue in [self.movies_router_queue, self.movies_router_q5_queue, 
+                        self.credits_router_queue, self.ratings_router_queue]:
+        await self._send_data_to_rabbitmq_queue(prepared_data, router_queue)
+    
+    logging.info(f"Sent DISCONNECT markers to all routers for client {client_id}")
 
   async def _send_eof_marker(self, csvs_received, client_id):
         prepared_data = self._addMetaData(client_id, None, True)
@@ -360,11 +384,12 @@ class Boundary:
         
         return result
   
-  def _addMetaData(self, client_id, data, is_eof_marker=False):
+  def _addMetaData(self, client_id, data, is_eof_marker=False, is_disconnect=False):
     message = {        
       "client_id": client_id,
       "data": data,
-      "EOF_MARKER": is_eof_marker
+      "EOF_MARKER": is_eof_marker,
+      "DISCONNECT": is_disconnect
     }
     return message
   

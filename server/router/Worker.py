@@ -130,11 +130,19 @@ class RouterWorker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER")
+            disconnect_marker = deserialized_message.get("DISCONNECT")
             query = deserialized_message.get("query")
             
 
             if not client_id:
                 logging.warning("Received message with missing client_id")
+                await message.ack()
+                return
+
+            # Handle DISCONNECT marker - immediate propagation to all queues
+            if disconnect_marker:
+                logging.info(f"Received DISCONNECT notification for client {client_id} - propagating immediately")
+                await self._send_disconnect_to_all_queues(client_id, query)
                 await message.ack()
                 return
 
@@ -244,6 +252,49 @@ class RouterWorker:
         # Close RabbitMQ connection - create a task since this is called from a signal handler
         if hasattr(self, 'rabbit_client'):
             asyncio.create_task(self.rabbit_client.close())
+
+    async def _send_disconnect_to_all_queues(self, client_id, query=None):
+        """Send DISCONNECT marker to all output queues for a specific client ID"""
+        # TODO: Add a _add_metadata method
+        disconnect_message = {
+            "client_id": client_id,
+            "data": None,
+            "EOF_MARKER": False,
+            "DISCONNECT": True
+        }
+        
+        # Include query field if present
+        if query:
+            disconnect_message["query"] = query
+        
+        # For fanout exchanges, we only need to publish once with any routing key
+        if self.exchange_type == "fanout":
+            # Just publish once to the exchange - it will distribute to all bound queues
+            success = await self.rabbit_client.publish(
+                exchange_name=self.exchange_name,
+                routing_key="",  # Routing key is ignored for fanout exchanges
+                message=Serializer.serialize(disconnect_message),
+                persistent=True
+            )
+            if not success:
+                logging.error(f"Failed to send DISCONNECT marker to fanout exchange for client {client_id}")
+            else:
+                logging.info(f"DISCONNECT marker sent to fanout exchange for client {client_id}, will be delivered to all bound queues")
+            return
+        
+        # For direct and other exchanges, send to each queue explicitly
+        all_queues = self._get_all_queue_names()
+        for queue in all_queues:
+            success = await self.rabbit_client.publish(
+                exchange_name=self.exchange_name,
+                routing_key=queue,
+                message=Serializer.serialize(disconnect_message),
+                persistent=True
+            )
+            if not success:
+                logging.error(f"Failed to send DISCONNECT marker to queue {queue} for client {client_id}")
+        
+        logging.info(f"DISCONNECT markers sent to all {len(all_queues)} output queues for client {client_id}")
 
     async def _send_eof_to_all_queues(self, client_id, data, query=None):
         """Send EOF marker to all output queues for a specific client ID"""

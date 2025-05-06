@@ -2,7 +2,7 @@ import socket
 import os
 import threading
 import json
-from datetime import datetime
+import signal
 from Protocol import Protocol
 import logging
 from Config import Config
@@ -29,6 +29,14 @@ class Client:
         self.output_file_q4 = f"output/output_records_client_{self.name}_Q4.json"
         self.output_file_q5 = f"output/output_records_client_{self.name}_Q5.json"
         
+        # Register signal handlers
+        signal.signal(signal.SIGTERM, self._handle_signal)
+        signal.signal(signal.SIGINT, self._handle_signal)
+        
+    def _handle_signal(self, sig, frame):
+        logging.info(f"Received signal {sig}, initiating graceful shutdown")
+        self.shutdown()
+    
     def __str__(self):
         return f"Client(name={self.name})"
     
@@ -53,7 +61,6 @@ class Client:
             self.skt = None
             
         # Wait for receiver thread to finish if it exists
-        # TODO: shutdown the socket so it does not get stuck in the recv when no more data is sent
         if self.receiver_thread and self.receiver_thread.is_alive():
             self.receiver_thread.join()
             if self.receiver_thread.is_alive():

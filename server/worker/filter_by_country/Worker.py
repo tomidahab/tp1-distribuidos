@@ -142,6 +142,17 @@ class Worker:
             data = deserialized_message.get("data")
             query = deserialized_message.get("query")
             eof_marker = deserialized_message.get("EOF_MARKER")
+            disconnect_marker = deserialized_message.get("DISCONNECT")
+            
+            # Handle DISCONNECT notifications first
+            if disconnect_marker:
+                logging.info(f"\033[95mReceived DISCONNECT notification for client_id '{client_id}'\033[0m")
+                # Propagate DISCONNECT to all downstream components
+                await self.send_disconnect(client_id, query)
+                await message.ack()
+                return
+                
+            # Handle EOF markers
             if eof_marker:
                 logging.info(f"\033[95mReceived EOF marker for client_id '{client_id}'\033[0m")
                 await self.send_eq_one_country(client_id, data, self.producer_queue_names[0], True)
@@ -153,6 +164,7 @@ class Worker:
                 await message.ack()
                 return
                 
+            # Regular message processing...
             if query == QUERY_EQ_YEAR:
                 data_eq_one_country, data_response_queue = self._filter_data(data)
                 if data_eq_one_country:
@@ -177,6 +189,22 @@ class Worker:
             logging.error(f"Error processing message: {e}")
             # Reject the message and requeue it
             await message.reject(requeue=True)
+
+    async def send_disconnect(self, client_id, query=None):
+        """Send DISCONNECT notification to all downstream components"""
+        # Send to primary output queue (for next stage processing)
+        message = self._add_metadata(client_id, None, False, query, True)
+        success = await self.rabbitmq.publish(
+            exchange_name=self.exchange_name_producer,
+            routing_key=self.producer_queue_names[0],
+            message=Serializer.serialize(message),
+            persistent=True
+        )
+
+        if not success:
+            logging.error(f"Failed to send DISCONNECT notification to primary queue for client {client_id}")
+        else:
+            logging.info(f"DISCONNECT notifications sent for client {client_id}")
 
     def _project_to_columns(self, data):
         """Project the data to only include the 'id' column"""
@@ -217,11 +245,12 @@ class Worker:
         if not success:
             logging.error(f"Failed to send data to response queue")
 
-    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+    def _add_metadata(self, client_id, data, eof_marker=False, query=None, disconnect_marker=False):
         """Add metadata to the message"""
         message = {        
             "client_id": client_id,
             "EOF_MARKER": eof_marker,
+            "DISCONNECT": disconnect_marker,
             "data": data,
             "query": query,
         }
