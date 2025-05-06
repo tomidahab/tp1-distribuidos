@@ -449,7 +449,6 @@ services:
   # # ------------------------------------ Q4 -------------------------------------------
   # # ===================================================================================
 
-  # TODO: separate the consumers by level instead of queries
   join_movies_router:
     build:
       context: ./server
@@ -562,7 +561,7 @@ services:
     environment:
       - NUMBER_OF_PRODUCER_WORKERS=4
       - INPUT_QUEUE=top_router
-      - OUTPUT_QUEUES=[["top_worker_1"],["top_worker_2"]]
+      - OUTPUT_QUEUES=[["top_worker_1"]]
       - BALANCER_TYPE=shard_by_ascii
     depends_on:
       - rabbitmq
@@ -587,22 +586,6 @@ services:
       - ./server/rabbitmq:/app/rabbitmq
       - ./server/common:/app/common
 
-  top_worker_2:
-    build:
-      context: ./server
-      dockerfile: worker/top/Dockerfile
-    env_file:
-      - ./server/worker/top/.env
-    environment:
-      - ROUTER_CONSUME_QUEUE=top_worker_2
-      - ROUTER_PRODUCER_QUEUE=top_10_actors_collector_router
-    depends_on:
-      - rabbitmq
-    volumes:
-      - ./server/worker/top:/app
-      - ./server/rabbitmq:/app/rabbitmq
-      - ./server/common:/app/common
-
   top_10_actors_collector_router:
     build:
       context: ./server
@@ -610,7 +593,7 @@ services:
     env_file:
       - ./server/router/.env
     environment:
-      - NUMBER_OF_PRODUCER_WORKERS=2
+      - NUMBER_OF_PRODUCER_WORKERS=1
       - INPUT_QUEUE=top_10_actors_collector_router
       - OUTPUT_QUEUES=collector_top_10_actors_worker
       - BALANCER_TYPE=round_robin
@@ -640,6 +623,7 @@ services:
   # # ===================================================================================
   # # ------------------------------------ Q5 -------------------------------------------
   # # ===================================================================================
+
   movies_q5_router:
     build:
       context: ./server
