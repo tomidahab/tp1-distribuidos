@@ -189,8 +189,11 @@ class Worker:
 
     async def send_dic(self,client_id):
         """Send data to the top5 queue in our exchange"""
-
-        message = self._add_metadata(client_id,self.dictionary_countries_budget_by_client[client_id])
+        if client_id in self.dictionary_countries_budget_by_client:
+            data = self.dictionary_countries_budget_by_client[client_id]
+        else:
+            data = {}
+        message = self._add_metadata(client_id,data)
         await self.rabbitmq.publish(exchange_name=self.exchange_name_producer,
             routing_key=ROUTER_PRODUCER_QUEUE,
             message=Serializer.serialize(message),
