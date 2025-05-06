@@ -131,14 +131,20 @@ class Worker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER", False)
+            disconnect_marker = deserialized_message.get("DISCONNECT")
+
             
             if client_id not in self.client_data:
                 self.client_data[client_id] = {
                     "POSITIVE": {"sum": 0, "count": 0},
                     "NEGATIVE": {"sum": 0, "count": 0}
                 }
+
+            if disconnect_marker:
+                logging.info(f"Disconnect marker received for client_id '{client_id}'")
+                self.client_data.pop(client_id, None)
             
-            if eof_marker:
+            elif eof_marker:
                 # If we have data for this client, send it to response queue
                 if client_id in self.client_data:
                     # Calculate final averages

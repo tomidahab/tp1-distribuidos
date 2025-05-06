@@ -138,14 +138,21 @@ class Worker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER")
-            
+            disconnect_marker = deserialized_message.get("DISCONNECT")
+
             # Initialize client state if this is a new client
             if client_id not in self.client_states:
                 self.client_states[client_id] = {'movies_done': False}
                 logging.info(f"\033[33mDiscovered new client by movies queue: {client_id}\033[0m")
                 
+            if disconnect_marker:
+                logging.info(f"Disconnect marker received for client_id '{client_id}'")
+                await self.send_data(client_id, data, False, disconnect_marker=True)
+                self.client_states.pop(client_id, None)
+                self.collected_data.pop(client_id, None)
+
             # Handle EOF marker for movies
-            if eof_marker:
+            elif eof_marker:
                 logging.info(f"Received EOF marker for movies from client '{client_id}'")
                 self.client_states[client_id]['movies_done'] = True
             
@@ -176,12 +183,22 @@ class Worker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER")
+            disconnect_marker = deserialized_message.get("DISCONNECT")
+
             
             # Initialize client state if this is a new client
             if client_id not in self.client_states:
                 self.client_states[client_id] = {'movies_done': False}
                 logging.info(f"\033[33mDiscovered new client by credits queue: {client_id}\033[0m")
                 
+            if disconnect_marker:
+                logging.info(f"Disconnect marker received for client_id '{client_id}'")
+                await self.send_data(client_id, data, False, disconnect_marker=True)
+                self.client_states.pop(client_id, None)
+                self.collected_data.pop(client_id, None)
+                await message.ack()
+                return
+            
             # Check if we've received all movies for this client
             movies_done = self.client_states[client_id]['movies_done']
             if not movies_done:
@@ -261,10 +278,10 @@ class Worker:
             logging.error(f"Error joining data: {e}")
             return []
 
-    async def send_data(self, client_id, data, eof_marker=False):
+    async def send_data(self, client_id, data, eof_marker=False, disconnect_marker=False):
         """Send processed data to the output queue"""
         try:    
-            message = self._add_metadata(client_id, data, eof_marker)
+            message = self._add_metadata(client_id, data, eof_marker, disconnect_marker=disconnect_marker)
             success = await self.rabbitmq.publish(
                 exchange_name=self.exchange_name_producer,
                 routing_key=self.producer_queue_name,
@@ -277,13 +294,14 @@ class Worker:
             logging.error(f"Error sending data to output queue: {e}")
             raise e
 
-    def _add_metadata(self, client_id, data, eof_marker, query=None):
+    def _add_metadata(self, client_id, data, eof_marker, query=None, disconnect_marker=False):
         """Prepare the message to be sent to the output queue"""
         message = {        
             "client_id": client_id,
             "data": data,
             "EOF_MARKER": eof_marker,
             "query": query,
+            "DISCONNECT": disconnect_marker
         }
         return message
         

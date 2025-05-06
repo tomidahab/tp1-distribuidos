@@ -133,7 +133,14 @@ class Worker:
             data = deserialized_message.get("data")
             query = deserialized_message.get("query")
             eof_marker = deserialized_message.get("EOF_MARKER")
-            if eof_marker:
+            disconnect_marker = deserialized_message.get("DISCONNECT")
+
+            if disconnect_marker:
+                logging.info(f"Disconnect marker received for client_id '{client_id}'")
+                await self.send_data(client_id, data, False, disconnect_marker=True)
+                self.participations.pop(client_id, None)
+
+            elif eof_marker:
                 logging.info(f"EOF marker received for client_id '{client_id}'")
                 await self.send_data(client_id, data, True, query)
             elif data:
@@ -165,9 +172,9 @@ class Worker:
             parsed_data.append({"name": actor, "count": count})
         return parsed_data
 
-    async def send_data(self, client_id, data, eof_marker=False, query=None):
+    async def send_data(self, client_id, data, eof_marker=False, query=None, disconnect_marker=False):
         """Send data to the router queue with query in metadata"""
-        message = self._add_metadata(client_id, data, eof_marker, query)
+        message = self._add_metadata(client_id, data, eof_marker, query, disconnect_marker)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
             routing_key=self.producer_queue_names[0],
@@ -178,13 +185,14 @@ class Worker:
             logging.error(f"Failed to send data with query '{query}' to router queue")
 
     #TODO: move _add_metadata to Serializer
-    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+    def _add_metadata(self, client_id, data, eof_marker=False, query=None, disconnect_marker=False):
         """Add metadata to the message"""
         message = {        
             "client_id": client_id,
             "EOF_MARKER": eof_marker,
             "data": data,
-            "query": query
+            "query": query,
+            "DISCONNECT": disconnect_marker
         }
         return message
 

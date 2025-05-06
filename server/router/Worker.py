@@ -143,6 +143,7 @@ class RouterWorker:
             if disconnect_marker:
                 logging.info(f"Received DISCONNECT notification for client {client_id} - propagating immediately")
                 await self._send_disconnect_to_all_queues(client_id, query)
+                self.end_of_file_received.pop(client_id, None)
                 await message.ack()
                 return
 

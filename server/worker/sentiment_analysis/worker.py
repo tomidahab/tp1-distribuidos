@@ -95,10 +95,26 @@ class SentimentWorker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER", False)
-
-            logging.info(f"Received message from client_id '{client_id}'")
+            disconnect_marker = deserialized_message.get("DISCONNECT", False)
             
-            if eof_marker:
+            if disconnect_marker:
+                logging.info(f"Disconnect marker received for client_id '{client_id}'")
+                response_message = self._add_metadata(
+                    client_id=client_id,
+                    disconnect_marker=True,
+                )
+                
+                # Send processed data to response queue
+                success = await self.rabbitmq.publish_to_queue(
+                    queue_name=self.response_queue_name,
+                    message=Serializer.serialize(response_message),
+                    persistent=True
+                )
+                
+                if not success:
+                    logging.error("Failed to send processed data to response queue")
+            
+            elif eof_marker:
                 logging.info(f"\033[93mReceived EOF marker for client_id '{client_id}'\033[0m")
                 # Pass through EOF marker to response queue
                 response_message = {
@@ -117,10 +133,11 @@ class SentimentWorker:
                 return
             
             # Process the movie data for sentiment analysis
-            if data:
+            elif data:
                 logging.info(f"Processing {len(data)} movies for sentiment analysis")
                 processed_data = await self._analyze_sentiment_and_calculate_ratios(data)
                 
+                # TODO: Move to _send_data
                 # Prepare response message using the standardized _add_metadata method
                 response_message = self._add_metadata(
                     client_id=client_id,
@@ -237,13 +254,14 @@ class SentimentWorker:
             logging.error(f"Error during sentiment analysis: {e}")
             return ("NEUTRAL", 0.5)
         
-    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+    def _add_metadata(self, client_id, data, eof_marker=False, query=None, disconnect_marker=False):
         """Prepare the message to be sent to the output queue - standardized across workers"""
         message = {        
             "client_id": client_id,
             "data": data,
             "EOF_MARKER": eof_marker,
             "query": query,
+            "DISCONNECT": disconnect_marker
         }
         return message
     

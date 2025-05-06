@@ -92,8 +92,17 @@ class Worker:
             client_id = deserialized_message.get("clientId", deserialized_message.get("client_id"))
             data = deserialized_message.get("data", [])
             eof_marker = deserialized_message.get("EOF_MARKER", False)
-            
-            if eof_marker:
+            disconnect_marker = deserialized_message.get("DISCONNECT")
+
+            if disconnect_marker:
+                logging.info(f"Disconnect marker received for client_id '{client_id}'")
+                await self.send_data(client_id, data, False, disconnect_marker=True)
+                self.client_data.pop(client_id, None)
+                # TODO: move ack to default behaviour
+                await message.ack()
+                return
+
+            elif eof_marker:
                 logging.info(f"Received EOF marker for client_id '{client_id}'")
                 
                 if client_id in self.client_data:
@@ -167,9 +176,9 @@ class Worker:
             logging.error(f"Error processing message: {e}")
             await message.reject(requeue=False)
     
-    async def send_data(self, client_id, data, eof_marker=False, query=None):
+    async def send_data(self, client_id, data, eof_marker=False, query=None, disconnect_marker=False):
         """Send data to the producer queue with query in metadata"""
-        message = self._add_metadata(client_id, data, eof_marker, query)
+        message = self._add_metadata(client_id, data, eof_marker, query, disconnect_marker)
         success = await self.rabbitmq.publish_to_queue(
             queue_name=self.producer_queue_name,
             message=Serializer.serialize(message),
@@ -178,13 +187,14 @@ class Worker:
         if not success:
             logging.error(f"Failed to send data with query '{query}' for client {client_id}")
     
-    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+    def _add_metadata(self, client_id, data, eof_marker=False, query=None, disconnect_marker=False):
         """Prepare the message to be sent to the output queue - standardized across workers"""
         message = {        
             "client_id": client_id,
             "data": data,
             "EOF_MARKER": eof_marker,
             "query": query,
+            "DISCONNECT": disconnect_marker,
         }
         return message
     

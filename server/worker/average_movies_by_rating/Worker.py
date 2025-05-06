@@ -129,7 +129,13 @@ class Worker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER")
-            if eof_marker:
+            disconnect_marker = deserialized_message.get("DISCONNECT")
+
+            if disconnect_marker:
+                logging.info(f"Disconnect marker received for client_id '{client_id}'")
+                await self.send_data(client_id, data, False, disconnect_marker=True)
+                self.averages.pop(client_id, None)
+            elif eof_marker:
                 logging.info(f"EOF marker received for client_id '{client_id}'")
                 await self.send_data(client_id, data, True)
             elif data:
@@ -201,9 +207,9 @@ class Worker:
             }
 
 
-    async def send_data(self, client_id, data, eof_marker=False, query=None):
+    async def send_data(self, client_id, data, eof_marker=False, query=None, disconnect_marker=False):
         """Send data to the router queue with query in metadata"""
-        message = self._add_metadata(client_id, data, eof_marker, query)
+        message = self._add_metadata(client_id, data, eof_marker, query, disconnect_marker)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
             routing_key=self.producer_queue_names[0],
@@ -215,13 +221,14 @@ class Worker:
 
 
     #TODO: move _add_metadata to Serializer
-    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+    def _add_metadata(self, client_id, data, eof_marker=False, query=None, disconnect_marker=False):
         """Add metadata to the message"""
         message = {        
             "client_id": client_id,
             "EOF_MARKER": eof_marker,
             "data": data,
-            "query": query
+            "query": query,
+            "DISCONNECT": disconnect_marker
         }
         return message
 

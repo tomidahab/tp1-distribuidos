@@ -133,8 +133,13 @@ class Worker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER", False)
-            
-            if eof_marker:
+            disconnect_marker = deserialized_message.get("DISCONNECT")
+
+            if disconnect_marker:
+                logging.info(f"Disconnect marker received for client_id '{client_id}'")
+                self.client_data.pop(client_id, None)
+
+            elif eof_marker:
                 # If we have data for this client, send it to router producer queue
                 if client_id in self.client_data:
                     top_actors = self._get_top_actors(client_id)

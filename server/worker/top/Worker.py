@@ -133,8 +133,14 @@ class Worker:
             client_id = deserialized_message.get("client_id")
             data = deserialized_message.get("data")
             eof_marker = deserialized_message.get("EOF_MARKER", False)
+            disconnect_marker = deserialized_message.get("DISCONNECT", False)
             
-            if eof_marker:
+            if disconnect_marker:
+                logging.info(f"Disconnect marker received for client_id '{client_id}'")
+                await self._send_data(client_id, data, self.producer_queue_name[0], False, disconnect_marker=True)
+                self.client_data.pop(client_id, None)
+            
+            elif eof_marker:
                 # If we have data for this client, send it to router producer queue
                 if client_id in self.client_data:
                     top_actors = self._get_top_actors(client_id)
@@ -192,12 +198,12 @@ class Worker:
         # Format the result as a list of dictionaries
         return [{"name": actor, "count": count} for actor, count in top_actors]
     
-    async def _send_data(self, client_id, data, queue_name=None, eof_marker=False, query=None):
+    async def _send_data(self, client_id, data, queue_name=None, eof_marker=False, query=None, disconnect_marker=False):
         """Send data to the specified router producer queue"""
         if queue_name is None:
             queue_name = self.producer_queue_name[0]
             
-        message = self._add_metadata(client_id, data, eof_marker, query)
+        message = self._add_metadata(client_id, data, eof_marker, query, disconnect_marker)
         success = await self.rabbitmq.publish(
             exchange_name=self.exchange_name_producer,
             routing_key=queue_name,
@@ -208,13 +214,14 @@ class Worker:
         if not success:
             logging.error(f"Failed to send data to {queue_name} for client {client_id}")
 
-    def _add_metadata(self, client_id, data, eof_marker=False, query=None):
+    def _add_metadata(self, client_id, data, eof_marker=False, query=None, disconnect_marker=False):
         """Prepare the message to be sent to the output queue"""
         message = {        
             "client_id": client_id,
             "data": data,
             "EOF_MARKER": eof_marker,
             "query": query,
+            "DISCONNECT": disconnect_marker
         }
         return message
         
