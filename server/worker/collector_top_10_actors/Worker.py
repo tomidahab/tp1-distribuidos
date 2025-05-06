@@ -159,16 +159,15 @@ class Worker:
     
     def _update_top_actors(self, client_id, actor_data_batch):
         """
-        Update the top N actors for a client with a new batch of actor data
-        Each batch contains unique actors that haven't been seen before
-        Using a max-heap to track top appearances
+        Update the actor counts for a client with a new batch of actor data
+        Using a dictionary to track all actors
         """
-        # Initialize max heap for this client if it doesn't exist
+        # Initialize dictionary for this client if it doesn't exist
         if client_id not in self.client_data:
-            self.client_data[client_id] = []
+            self.client_data[client_id] = {}
 
-        # Get current heap
-        actors_list = self.client_data[client_id]
+        # Get current dictionary
+        actors_dict = self.client_data[client_id]
         
         # Process each actor in the batch
         for actor_info in actor_data_batch:
@@ -177,18 +176,15 @@ class Worker:
             
             if not name:
                 continue
-                
-            # For a max heap, we negate the count (since heapq is a min heap by default)
-            # Tuple format: (-count, name) - negative count makes it a max heap
-            entry = (-count, name)
             
-            # If heap is not full yet, add the new actor
-            if len(actors_list) < self.top_n:
-                heapq.heappush(actors_list, entry)
-            # Otherwise, check if this actor should replace one in our top N
-            elif -entry[0] > -actors_list[0][0]:  # If new count > smallest count in heap
-                heapq.heapreplace(actors_list, entry)
-    
+            # Update or add the actor count
+            if name in actors_dict:
+                # Take the higher count if we see the same actor twice
+                # (This handles the case where an actor might appear in multiple batches)
+                actors_dict[name] = max(actors_dict[name], count)
+            else:
+                actors_dict[name] = count
+                
     def _get_top_actors(self, client_id):
         """
         Get the top N actors for a client in descending order of count
@@ -196,15 +192,16 @@ class Worker:
         if client_id not in self.client_data:
             return []
         
-        # Get heap for this client
-        heap = self.client_data[client_id]
+        # Get actor dictionary for this client
+        actors_dict = self.client_data[client_id]
         
-        # Sort actors based on heap entries (already in correct order because of max-heap)
-        # No need for additional sorting since our max-heap already has them in right order
+        # Sort actors by count (descending) and take top N
+        top_actors = sorted(
+            [{"name": name, "count": count} for name, count in actors_dict.items()],
+            key=lambda x: (-x["count"], x["name"])  # Sort by count desc, then name asc
+        )[:self.top_n]
         
-        # Convert from max-heap format (-count, name) to the expected output format
-        # We negate the count again to get the original positive value
-        return [{"name": name, "count": -count} for count, name in sorted(heap)]
+        return top_actors
     
     
     async def _send_data(self, client_id, data, queue_name=None, eof_marker=False, query=None):
